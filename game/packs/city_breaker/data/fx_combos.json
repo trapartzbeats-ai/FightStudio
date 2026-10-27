@@ -1,0 +1,6 @@
+{
+  "note": "Effect combos made in the Studio: name -> [[RMT effect id, scale, delay seconds], ...]. Usable anywhere an effect id is (fx.json, clip cues).",
+  "combos": {
+    "heavy_slam": [["impact_spark", 1.4, 0.0], ["shock_punch", 1.2, 0.0], ["blast_wave", 0.8, 0.06]]
+  }
+}

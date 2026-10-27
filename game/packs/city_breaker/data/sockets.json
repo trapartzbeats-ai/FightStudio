@@ -1,0 +1,23 @@
+{
+  "note": "Effect sockets: named points that ride a bone, so an effect lands on the same spot every frame whatever the animation does. spec = bone, to (a child bone the point moves toward, optional), t (0..1 along bone -> to), extra [x,y,z] in the BONE's own axes (metres, unscaled rig units). sole = the bottom of the foot (found from the rest pose). ground_mid = the floor point at the middle of the unit (the root). Per-fighter overrides go in 'fighters': {key: {socket: spec}}; set only what differs. 'ground' sockets sit on the floor under a bone. Turn the markers on with --sockets (match.tscn) to see and tune them.",
+  "sockets": {
+    "fist_R":  {"bone": "handR", "to": "fingersR", "t": 1.0},
+    "fist_L":  {"bone": "handL", "to": "fingersL", "t": 1.0},
+    "elbow_R": {"bone": "elbowR"},
+    "elbow_L": {"bone": "elbowL"},
+    "knee_R":  {"bone": "kneeR"},
+    "knee_L":  {"bone": "kneeL"},
+    "foot_R":  {"bone": "footR"},
+    "foot_L":  {"bone": "footL"},
+    "ground_R": {"bone": "footR", "ground": true},
+    "ground_L": {"bone": "footL", "ground": true},
+    "ground_mid": {"bone": "root", "ground": true},
+    "sole_R":  {"bone": "footR", "sole": true},
+    "sole_L":  {"bone": "footL", "sole": true},
+    "hips":    {"bone": "hips"},
+    "mid":     {"bone": "torso", "to": "chest", "t": 0.5},
+    "chest":   {"bone": "chest", "to": "neck", "t": 0.3},
+    "head":    {"bone": "head"}
+  },
+  "fighters": {}
+}

@@ -1,0 +1,155 @@
+{
+  "note": "Secondary motion chains (secondary.gd): tails, fingers... move by themselves from the character's motion. strength 0..1 = how much over the animation; stiffness / drag / gravity per joint root -> end (a number = all joints). Per-fighter overrides under fighters. Edit in the Studio SECONDARY tab. Chains whose bones a fighter does not have are skipped (ears: vix carter rhino; crest: guru; pom: slum).",
+  "enabled": true,
+  "chains": {
+    "tail": {
+      "enabled": true,
+      "root": "tail",
+      "end": "tail3",
+      "extend": 0.3,
+      "strength": 1.0,
+      "stiffness": [
+        1.4,
+        0.9,
+        0.5
+      ],
+      "drag": [
+        0.18,
+        0.22,
+        0.28
+      ],
+      "gravity": [
+        0.35,
+        0.45,
+        0.55
+      ]
+    },
+    "fingers_L": {
+      "enabled": true,
+      "root": "handL",
+      "end": "tipsL",
+      "extend": 0.05,
+      "strength": 0.8,
+      "stiffness": [
+        2.5,
+        2.0
+      ],
+      "drag": [
+        0.3,
+        0.35
+      ],
+      "gravity": [
+        0.2,
+        0.25
+      ]
+    },
+    "fingers_R": {
+      "enabled": true,
+      "root": "handR",
+      "end": "tipsR",
+      "extend": 0.05,
+      "strength": 0.8,
+      "stiffness": [
+        2.5,
+        2.0
+      ],
+      "drag": [
+        0.3,
+        0.35
+      ],
+      "gravity": [
+        0.2,
+        0.25
+      ]
+    },
+    "ear_L": {
+      "enabled": true,
+      "root": "earL",
+      "end": "earL3",
+      "extend": 0.08,
+      "strength": 1.0,
+      "stiffness": [
+        2.2,
+        1.5,
+        1.0
+      ],
+      "drag": [
+        0.25,
+        0.3,
+        0.35
+      ],
+      "gravity": [
+        0.15,
+        0.2,
+        0.25
+      ]
+    },
+    "ear_R": {
+      "enabled": true,
+      "root": "earR",
+      "end": "earR3",
+      "extend": 0.08,
+      "strength": 1.0,
+      "stiffness": [
+        2.2,
+        1.5,
+        1.0
+      ],
+      "drag": [
+        0.25,
+        0.3,
+        0.35
+      ],
+      "gravity": [
+        0.15,
+        0.2,
+        0.25
+      ]
+    },
+    "crest": {
+      "enabled": true,
+      "root": "crest",
+      "end": "crest3",
+      "extend": 0.12,
+      "strength": 1.0,
+      "stiffness": [
+        2.0,
+        1.2,
+        0.7
+      ],
+      "drag": [
+        0.2,
+        0.25,
+        0.3
+      ],
+      "gravity": [
+        0.2,
+        0.3,
+        0.4
+      ]
+    },
+    "pom": {
+      "enabled": true,
+      "root": "pom",
+      "end": "pom3",
+      "extend": 0.05,
+      "strength": 1.0,
+      "stiffness": [
+        2.0,
+        1.4,
+        1.0
+      ],
+      "drag": [
+        0.25,
+        0.3,
+        0.35
+      ],
+      "gravity": [
+        0.3,
+        0.4,
+        0.5
+      ]
+    }
+  },
+  "fighters": {}
+}

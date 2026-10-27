@@ -1,0 +1,95 @@
+{
+  "note": "Ear / fin / crest regions per fighter for Animato's add_ears.py: a list of {name (bone base name), sx (-1 left, +1 right, 0 centre), cx (sideways centre, metres from the head bone), hx half width, cy/hy depth centre/half depth, z0..z1 base to tip height}. Head-mesh vertices inside the box are given to name, name2, name3 (a 3-bone chain, base to tip). Tune and re-run to move what belongs to the part.",
+  "fighters": {
+    "vix": [
+      {
+        "name": "earL",
+        "sx": -1,
+        "cx": 0.165,
+        "hx": 0.1,
+        "cy": -0.01,
+        "hy": 0.14,
+        "z0": 0.15,
+        "z1": 0.42
+      },
+      {
+        "name": "earR",
+        "sx": 1,
+        "cx": 0.165,
+        "hx": 0.1,
+        "cy": -0.01,
+        "hy": 0.14,
+        "z0": 0.15,
+        "z1": 0.42
+      }
+    ],
+    "carter": [
+      {
+        "name": "earL",
+        "sx": -1,
+        "cx": 0.3,
+        "hx": 0.09,
+        "cy": 0.0,
+        "hy": 0.15,
+        "z0": 0.22,
+        "z1": 0.42
+      },
+      {
+        "name": "earR",
+        "sx": 1,
+        "cx": 0.3,
+        "hx": 0.09,
+        "cy": 0.0,
+        "hy": 0.15,
+        "z0": 0.22,
+        "z1": 0.42
+      }
+    ],
+    "rhino": [
+      {
+        "name": "earL",
+        "sx": -1,
+        "cx": 0.22,
+        "hx": 0.12,
+        "cy": 0.05,
+        "hy": 0.3,
+        "z0": 0.06,
+        "z1": 0.3
+      },
+      {
+        "name": "earR",
+        "sx": 1,
+        "cx": 0.22,
+        "hx": 0.12,
+        "cy": 0.05,
+        "hy": 0.3,
+        "z0": 0.06,
+        "z1": 0.3
+      }
+    ],
+    "guru": [
+      {
+        "name": "crest",
+        "sx": 0,
+        "cx": 0.0,
+        "hx": 0.16,
+        "cy": 0.0,
+        "hy": 0.06,
+        "z0": 0.26,
+        "z1": 0.62
+      }
+    ],
+    "slum": [
+      {
+        "name": "pom",
+        "sx": 0,
+        "cx": 0.0,
+        "hx": 0.09,
+        "cy": 0.0,
+        "hy": 0.09,
+        "z0": 0.34,
+        "z1": 0.52
+      }
+    ]
+  }
+}

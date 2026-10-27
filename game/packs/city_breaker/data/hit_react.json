@@ -1,0 +1,14 @@
+{
+  "note": "Body reaction to a hit (hit_react.gd): the part of the victim an attack zone lands on is pushed along the blow, nearby bones follow in proportion and a spring settles them; the attacker's striking limb recoils a little. Per-fighter overrides under fighters. Tune in the Studio REACT tab.",
+  "settings": {
+    "enabled": true, "radius": 0.55, "falloff": "smooth", "strength": 1.0, "frequency": 8.0, "damping": 0.45,
+    "up": 0.55, "up_steps": 3, "down": 0.45, "max_angle": 0.9, "recoil": 0.35,
+    "bone_scale": {"hips": 0.2, "torso": 0.55, "chest": 0.6, "neck": 0.9, "head": 1.0, "tail": 1.2, "tail2": 1.3, "tail3": 1.4,
+                   "handL": 1.1, "handR": 1.1, "fingersL": 1.2, "fingersR": 1.2, "footL": 0.8, "footR": 0.8}
+  },
+  "fighters": {
+    "bigbill": {"strength": 0.7},
+    "rhino": {"strength": 0.75},
+    "vix": {"strength": 1.1}
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "note": "Dust is the pack procedural CBFx.dust (the RMT dust_kick draws white squares here). Combat effect table. Each event is a list of [rmt effect id, scale]. hit picks the first tier whose max_dmg covers the hit. Effects are RMT Effect blocks (addons/rmt_effects, autoload Rmtfx) fired at a socket or hit point; looping ones (follow) ride a socket node. Edit here, not in code.",
+  "hit": [
+    {"max_dmg": 6.0,  "fx": [["impact_spark", 0.9]]},
+    {"max_dmg": 11.0, "fx": [["impact_spark", 1.3], ["shock_punch", 0.9]]},
+    {"max_dmg": 999.0, "fx": [["blast_impact", 1.2], ["shock_punch", 1.2]]}
+  ],
+  "big_launch": [["blast_wave", 0.8]],
+  "shield_hit": [["clash_sparks", 1.0]],
+  "shield_break": [["barrier_shatter", 1.4]],
+    "double_jump": [["dash_burst", 0.8]],
+  "dodge": [["dash_burst", 0.9]],
+  "special": [["shockwave", 0.7]],
+  "ko": [["explosion_heavy", 1.5]],
+  "ultra_impact": [["final_flash", 1.1], ["blast_wave", 1.2]],
+  "follow": {
+    "shield": ["energy_shield", "chest", 1.0],
+    "ultra_charge": ["energy_charge", "chest", 1.2]
+  }
+}
