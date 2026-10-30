@@ -1,6 +1,7 @@
 // The window: menu bar, tool bar, canvas, transport, docks (tabs you drag between docks; right-click a tab to float it in its
 // own window, close that window to dock it back), splitters, status bar, prompt dialogs, and extra canvas windows.
-import { h, button, select, num } from "./ui.js";
+import { h, button, select, num, check } from "./ui.js";
+import { suggestName } from "./core/motion_import.js";
 import * as R from "./core/rig.js";
 import { EASES } from "./core/doc.js";
 import { ViewHost, LAYOUTS, renderPicture } from "./views.js";
@@ -251,6 +252,35 @@ export class Shell {
     input.select();
   }
 
+  // File > Import motion: pick a Mixamo FBX (or a GLB / glTF), then the few choices that matter, then it opens as a new clip
+  async importMotion() {
+    const path = await window.host.pickMotion();
+    if (!path) return;
+    const m = this.modal;
+    const file = path.split(/[\\/]/).pop();
+    const name = h("input", { value: suggestName(path), style: "width:320px" });
+    const opt = (text) => { const c = check(text, true, () => {}); return { el: c, on: () => c.querySelector("input").checked }; };
+    const inPlace = opt("In place (take the travel out; the game moves the fighter)");
+    const limits = opt("Keep every joint inside the rig limits (knees never bend forward)");
+    const fingers = opt("Bring the fingers too");
+    const go = async () => {
+      m.classList.add("hidden");
+      const app = this.app;
+      if (app.history.dirty() && !(await window.host.confirm(`"${app.doc.name}" has changes that are not saved. Import anyway (changes are lost)?`))) return;
+      app.say(`Importing ${file}...`);
+      await app.importMotion(path, { name: name.value.trim(), in_place: inPlace.on(), limits: limits.on(), fingers: fingers.on() });
+    };
+    name.onkeydown = (e) => { if (e.key === "Enter") go(); if (e.key === "Escape") m.classList.add("hidden"); e.stopPropagation(); };
+    m.innerHTML = "";
+    m.append(h("div", { class: "box wide" }, h("div", { class: "heading" }, "Import " + file), h("div", { class: "row" }, h("span", { class: "lbl" }, "Clip name"), name),
+      inPlace.el, limits.el, fingers.el,
+      h("div", { class: "hint" }, "Mixamo: download \"Without Skin\" (with skin works too), any frame rate. The clip opens unsaved: look at it, then Save."),
+      h("div", { class: "row end" }, button("CANCEL", () => m.classList.add("hidden")), button("IMPORT", go, "", "on"))));
+    m.classList.remove("hidden");
+    name.focus();
+    name.select();
+  }
+
   info(title, text) {
     const m = this.modal;
     m.innerHTML = "";
@@ -260,7 +290,7 @@ export class Shell {
 
   async picture(kind, w, h2, cols = 8, path = "") {
     const b64 = await renderPicture(this.app, this.app.views.main, kind, w, h2, cols);
-    const p = await window.host.writePng(path || `D:/Cache/fight_studio_renders/${this.app.fighter}_${this.app.doc.name}_${kind}_${w}x${h2}_${Date.now()}.png`, b64);
+    const p = await window.host.writePng(path || `${this.app.info.dirs.renders}/${this.app.fighter}_${this.app.doc.name}_${kind}_${w}x${h2}_${Date.now()}.png`, b64);
     this.app.say(p ? "Rendered " + p : "Render failed", p ? "ok" : "error");
     return p || "";
   }

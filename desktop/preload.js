@@ -2,7 +2,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 const names = ["info", "listClips", "loadClip", "clipExists", "saveClip", "trashClip", "listPoses", "loadPose", "savePose", "loadData",
-  "saveData", "fighters", "modelUrl", "writePng", "openPath", "captureWindow", "bakeAnimato", "openGodotAnimator", "confirm", "setTitle", "quit", "log"];
+  "saveData", "fighters", "modelUrl", "pickMotion", "motionUrl", "writePng", "openPath", "captureWindow", "bakeAnimato", "openGodotAnimator", "confirm", "setTitle", "changeProject", "quit", "log"];
 const host = {};
 for (const n of names) host[n] = (...a) => ipcRenderer.invoke("fs:" + n, ...a);
 

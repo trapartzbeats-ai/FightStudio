@@ -16,23 +16,44 @@ const arg = (name, dflt) => {
 };
 const flag = (name) => ARGS.includes(`--${name}`);
 
-const PROJECT = process.env.FIGHT_STUDIO_PROJECT || arg("project", "D:/Games/BSP-Universe");
-const PACK = path.join(PROJECT, "game/packs/city_breaker");
-const DIRS = {
-  clips: path.join(PACK, "data/clips"),
-  poses: path.join(PACK, "data/poses"),
-  chars: path.join(PACK, "assets/chars"),
-  data: path.join(PACK, "data"),
-  trash: "D:/Cache/fight_studio_trash",
-  backups: "D:/Cache/fight_studio_backups",
-  renders: "D:/Cache/fight_studio_renders",
-};
+// settings kept between runs (the game project folder you picked), in the app's own user folder
+const SETTINGS = path.join(app.getPath("userData"), "settings.json");
+const settings = (() => { try { return JSON.parse(fs.readFileSync(SETTINGS, "utf8")); } catch { return {}; } })();
+const saveSettings = () => { fs.mkdirSync(path.dirname(SETTINGS), { recursive: true }); fs.writeFileSync(SETTINGS, JSON.stringify(settings, null, 2)); };
+// the game project: --project=, FIGHT_STUDIO_PROJECT, the folder picked last time, or the author's; asked for on first run when
+// none of those is a project with the City Breaker pack in it
+const isProject = (p) => !!p && fs.existsSync(path.join(p, "game/packs/city_breaker/data/clips"));
+let PROJECT = [arg("project", ""), process.env.FIGHT_STUDIO_PROJECT, settings.project, "D:/Games/BSP-Universe"].find(isProject) || "";
+// trash, backups and renders: D:/Cache on the author's machine, Documents/Fight Studio anywhere else
+const WORK = fs.existsSync("D:/Cache") ? "D:/Cache" : path.join(app.getPath("documents"), "Fight Studio");
+const DIRS = {};
+function setProject(p) {
+  PROJECT = p;
+  const pack = path.join(p, "game/packs/city_breaker");
+  Object.assign(DIRS, { clips: path.join(pack, "data/clips"), poses: path.join(pack, "data/poses"), chars: path.join(pack, "assets/chars"), data: path.join(pack, "data"),
+    trash: path.join(WORK, "fight_studio_trash"), backups: path.join(WORK, "fight_studio_backups"), renders: path.join(WORK, "fight_studio_renders"),
+    mcp: path.join(pack, "animator/mcp/fight_studio_mcp.py") });
+}
+setProject(PROJECT || ".");
+
+// ask for the game project folder until it is one (or the dialog is cancelled: "")
+async function pickProject(parent) {
+  for (;;) {
+    const r = await dialog.showOpenDialog(parent, { title: "Fight Studio: pick the game project folder (the one with game/packs/city_breaker in it)",
+      properties: ["openDirectory"] });
+    if (r.canceled || !r.filePaths.length) return "";
+    if (isProject(r.filePaths[0])) return r.filePaths[0];
+    await dialog.showMessageBox(parent, { type: "warning", title: "Fight Studio",
+      message: "That folder has no game/packs/city_breaker/data/clips in it. Pick the Godot project folder (the one with project.godot)." });
+  }
+}
 const API_PORT = Number(arg("api-port", 47651));
 const ANIMATO_PY = "D:/Projects/Animato/.venv/Scripts/python.exe";
 const ANIMATO_BAKE = "D:/Projects/Animato/bake_studio_clips.py";
 
 let win = null;
-const LOG = path.join(__dirname, "out", "desktop.log");
+// the log: out/desktop.log next to the code when run from source, the user folder when installed (the code is read-only there)
+const LOG = app.isPackaged ? path.join(app.getPath("userData"), "desktop.log") : path.join(__dirname, "out", "desktop.log");
 fs.mkdirSync(path.dirname(LOG), { recursive: true });
 fs.writeFileSync(LOG, "");
 // Electron is a GUI app on Windows: its console often goes nowhere, so the log also goes to out/desktop.log
@@ -42,6 +63,7 @@ function log(...a) {
   console.log(line);
 }
 let apiServer = null;
+let lastImportDir = "";
 const pending = new Map();
 let rpcSeq = 1;
 
@@ -119,6 +141,15 @@ const handlers = {
     fs.writeFileSync(p, Buffer.from(base64, "base64"));
     return p;
   },
+  // motion to import (Mixamo FBX, GLB, glTF): the file you pick, or the path an agent names; only those file types, read-only
+  pickMotion: async () => {
+    const r = await dialog.showOpenDialog(win, { title: "Import motion (Mixamo FBX, GLB, glTF)", defaultPath: lastImportDir || app.getPath("downloads"),
+      properties: ["openFile"], filters: [{ name: "Mixamo / FBX", extensions: ["fbx"] }, { name: "glTF", extensions: ["glb", "gltf"] }] });
+    if (r.canceled || !r.filePaths.length) return "";
+    lastImportDir = path.dirname(r.filePaths[0]);
+    return r.filePaths[0];
+  },
+  motionUrl: (file) => (typeof file === "string" && /\.(fbx|glb|gltf)$/i.test(file) && fs.existsSync(file) ? pathToFileURL(path.resolve(file)).href : null),
   openPath: (p) => shell.openPath(p),
   captureWindow: async (file) => {
     if (!win) return null;
@@ -135,7 +166,7 @@ const handlers = {
     return { ok: true, pid: child.pid };
   },
   openGodotAnimator: (fighter, clip) => {
-    const exe = "D:/Downloads/Godot_v4.7-stable_win64.exe/Godot_v4.7-stable_win64.exe";
+    const exe = process.env.FIGHT_STUDIO_GODOT || settings.godot || "D:/Downloads/Godot_v4.7-stable_win64.exe/Godot_v4.7-stable_win64.exe";
     if (!fs.existsSync(exe)) return false;
     const child = spawn(exe, ["--path", PROJECT, "res://game/packs/city_breaker/animator/animator.tscn", "--", `--fighter=${fighter}`, `--clip=${clip}`], { detached: true, stdio: "ignore" });
     child.unref();
@@ -146,6 +177,16 @@ const handlers = {
     return r.response === 0;
   },
   setTitle: (t) => win && win.setTitle(t),
+  // another game project folder: remembered, then the app starts again on it
+  changeProject: async () => {
+    const p = await pickProject(win);
+    if (!p) return false;
+    settings.project = p;
+    saveSettings();
+    app.relaunch({ args: process.argv.slice(1).filter((a) => !a.startsWith("--project=")) });
+    app.exit(0);
+    return true;
+  },
   quit: (code) => {
     app.exit(code || 0);
   },
@@ -274,7 +315,18 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  if (!PROJECT) {
+    const p = await pickProject(null);
+    if (!p) {
+      await dialog.showMessageBox({ type: "info", title: "Fight Studio",
+        message: "Fight Studio needs the game project folder (the Godot project with game/packs/city_breaker in it). Start it again to pick one." });
+      return app.exit(0);
+    }
+    settings.project = p;
+    saveSettings();
+    setProject(p);
+  }
   createWindow();
   if (!flag("no-api")) startApi();
 });

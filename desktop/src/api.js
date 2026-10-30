@@ -3,8 +3,10 @@
 import * as THREE from "three";
 import * as R from "./core/rig.js";
 import * as E from "./core/evalc.js";
-import { poseOfKey } from "./core/doc.js";
+import { poseOfKey, newId } from "./core/doc.js";
 import { DEG, RAD, v3, dist3 } from "./core/clip.js";
+import * as A from "./core/adjust.js";
+import * as M from "./core/merge.js";
 
 export const METHODS = {
   ping: "-> 'pong'", state: "what is open", rig: "bones, axes, limits, limbs, masks, controls, sockets, rules", list_fighters: "", set_fighter: "{fighter}",
@@ -17,8 +19,21 @@ export const METHODS = {
   mirror_pose: "{mode: l2r|r2l|flip, frame?, key?}", reset_bones: "{bones, frame?, key?}", breakdown: "{t, frame?, key?}", list_poses: "{}", save_pose: "{name, bones?}",
   apply_pose: "{name, frame?, bones?, weight?, mirror?, key?}", list_controls: "{frame?}", set_control: "{name, value, frame?, key?}", add_control: "{name, min?, max?, drives}",
   list_layers: "{}", add_layer: "{...}", set_layer: "{id, ...}", remove_layer: "{id}", set_active_layer: "{id}", list_constraints: "{}", add_constraint: "{type, ...}",
+  merge: "{base? (clip to open as the base), discard?, clips: [{clip, parts?: Head|Spine|Arm L|Arm R|Hands|Hips|Legs|Tail (default arms + hands), start?, blend_in=10, blend_out=10, weight=1, cycle=false}], bake=false, name?} -> {layers, baked?}",
+  merge_add: "{clip, parts?, start? (-1 = current frame), blend_in=10, blend_out=10, weight=1, cycle=false} -> the layer",
+  merge_set: "{id, parts?, start?, blend_in?, blend_out?, weight?, cycle?, speed?, mute?} -> the layer",
+  merge_bake: "{name} -> {name, frames, keys, base}: ONE new clip from the base + clips on top (opens unsaved)",
+  show_panel: "{title}: bring a panel to the front (Merge, Adjust, Feet, Layers, Dope Sheet, Blend Lab, Clips, ...)",
+  adjust: "{bone, x=0, y=0, z=0 (degrees, the TOTAL turn of this adjustment), scope: all|frame|range, frame? (scope frame; default current), from?, to? (scope range), ease=6, mirror=false} -> {layers}; all zero removes it",
+  adjust_restore: "{id? | bone?} (neither = all adjustments) -> {restored}", adjustments: "{} -> [{id, bone, scope, start, end, turn (degrees), text}]",
+  feet: "{planted? (sets the clip's plant flag first), step=1} -> {planted, soles {footL: {tilt0, ankle_cm}}, counts {flat, pivot, limit, sink, air}, frames [{f, footL: {state, low_cm, tilt}, footR}]}: how the feet stand in the match, per frame",
   set_constraint: "{id, ...}", remove_constraint: "{id}", freeze: "{bone, from?, to?, what?}", bake_to_keys: "{}", lock: "{bones, channels?}", unlock: "{bones}",
-  list_sockets: "{}", add_marker: "{frame, name}", set_view: "{layout?, index?, preset?, ortho?, onion?, tool?, bone?}", screenshot: "{target: window|view|sheet, width?, height?, cols?, path?}",
+  list_sockets: "{}", add_marker: "{frame, name}",
+  list_props: "{} -> the clip's props [{id, name, shape, socket | grip, size?, offset, rot, scale, color}]",
+  add_prop: "{shape: block|cylinder|sphere|box|bat|blade|ball|can|phone, grip?: cylinder_R|sphere_L|block_R.., socket?, size?: [x,y,z] m, offset?, rot? deg, color?, name?} -> id (clip only, never in the game)",
+  set_prop: "{id, ...same fields}", remove_prop: "{id} (or {all: true})",
+  set_view: "{layout?, index?, preset?, ortho?, onion?, tool?, bone?, focus_bone?, dist? m, yaw? deg, pitch? deg}", screenshot: "{target: window|view|sheet, width?, height?, cols?, path?}",
+  import_motion: "{path (Mixamo FBX / GLB / glTF on disk), name?, anim?, in_place=true, limits=true, fingers=true, plant='auto', loop='auto', discard?: bool} -> report; opens the clip unsaved",
   checks: "{}", transition_clip: "{clip_b, at, blend, name}", undo: "{}", redo: "{}", history: "{}", say: "{message}", bake_glb: "{}",
 };
 
@@ -175,6 +190,36 @@ export function makeApi(app) {
     set_layer: async (p) => { const d = { ...p }; delete d.id; if (typeof d.mask === "string") d.mask = R.MASKS[d.mask] || []; await app.setLayer(p.id, d, who); return app.doc.layerById(p.id); },
     remove_layer: (p) => { app.removeLayer(p.id, who); return { layers: app.doc.layers.length }; },
     set_active_layer: (p) => { app.setActiveLayer(p.id || ""); return { active_layer: app.activeLayer }; },
+    merge: async (p) => {
+      if (p.base && String(p.base) !== app.doc.name) {
+        if (app.history.dirty() && !p.discard) return { error: `the open clip ${app.doc.name} has unsaved changes: save first, or pass discard: true` };
+        if (!(await app.openClip(String(p.base), true))) return { error: "no clip named " + p.base };
+      }
+      const made = [];
+      for (const c of p.clips || []) {
+        const l = await app.mergeAdd(String(c.clip || ""), c.parts || M.DEFAULT_PARTS, Number(c.start ?? 0), Number(c.blend_in ?? 10), Number(c.blend_out ?? 10), Number(c.weight ?? 1), !!c.cycle, who);
+        if (!l) return { error: "no clip named " + c.clip, layers: made };
+        made.push(l);
+      }
+      const out = { base: app.doc.name, layers: made, frames: M.length(app.doc) };
+      if (p.bake) out.baked = app.mergeBake(String(p.name || app.doc.name + "_merged"), who);
+      return out;
+    },
+    merge_add: async (p) => (await app.mergeAdd(String(p.clip || ""), p.parts || M.DEFAULT_PARTS, Number(p.start ?? -1), Number(p.blend_in ?? 10), Number(p.blend_out ?? 10), Number(p.weight ?? 1), !!p.cycle, who)) || { error: "no clip named " + p.clip },
+    merge_set: async (p) => { const d = { ...p }; delete d.id; await app.mergeSet(String(p.id || ""), d, who); return app.doc.layerById(String(p.id || "")); },
+    merge_bake: (p) => app.mergeBake(String(p.name || app.doc.name + "_merged"), who),
+    show_panel: (p) => { app.ui.showPanel(String(p.title || "")); return { shown: String(p.title || "") }; },
+    adjust: (p) => {
+      const ls = app.adjustPart(String(p.bone || ""), [p.x, p.y, p.z].map((x) => Number(x || 0) * RAD), String(p.scope || "all"), Number(p.frame ?? -1), Number(p.from ?? 0), Number(p.to ?? -1), Number(p.ease ?? 6), !!p.mirror, who);
+      return { layers: ls.map((l) => A.describe(l)) };
+    },
+    adjust_restore: (p) => ({ restored: app.adjustRestore(String(p.id || ""), String(p.bone || ""), who) }),
+    adjustments: () => A.adjustLayers(app.doc).map((l) => ({ id: l.id, bone: l.bone || "", scope: l.scope || "", start: l.start || 0, end: l.end ?? -1,
+      turn: A.value(l).map((x) => Math.round(x * DEG * 100) / 100), text: A.describe(l) })),
+    feet: (p) => {
+      if (p.planted !== undefined && !!p.planted !== app.doc.plant) app.setClipProp("plant", !!p.planted, who);
+      return app.feetReport(Number(p.step || 1));
+    },
     list_constraints: () => app.doc.constraints,
     add_constraint: (p) => app.addConstraint(conDef(p), who),
     set_constraint: (p) => { const d = conDef(p); delete d.id; app.setConstraint(p.id, d, who); return app.doc.constraintById(p.id); },
@@ -184,6 +229,22 @@ export function makeApi(app) {
     lock: (p) => { for (const b of p.bones || []) app.setLock(b, p.channels || "xyz", who); return app.doc.locks; },
     unlock: (p) => { for (const b of p.bones || []) app.setLock(b, "", who); return app.doc.locks; },
     list_sockets: () => Object.fromEntries(Object.keys(app.sockSpecs).map((n) => [n, { bone: app.sockSpecs[n].bone, world: m3(app.socketWorld(n)) }])),
+    list_props: () => app.doc.props,
+    add_prop: (p) => {
+      const shape = String(p.shape || "block");
+      const pr = { id: newId(app.doc.props, "prop"), name: String(p.name || shape), shape, socket: String(p.socket || "fist_R"), offset: p.offset || [0, 0, 0],
+        rot: p.rot || [0, 0, 0], scale: Number(p.scale ?? 1), color: String(p.color || "#9a9aa2") };
+      if (p.grip) pr.grip = String(p.grip);
+      if (p.size) pr.size = p.size;
+      app.mutate("Add prop " + shape, () => app.doc.props.push(pr), who);
+      return { id: pr.id };
+    },
+    set_prop: (p) => { app.mutate("Prop " + p.id, () => { const x = app.doc.props.find((q) => q.id === p.id); if (x) for (const k in p) if (k !== "id") x[k] = p[k]; }, who); return app.doc.props; },
+    remove_prop: (p) => {
+      if (p.all) app.mutate("Remove props", () => app.doc.props.splice(0), who);
+      else app.mutate("Remove prop", () => app.doc.removeById(app.doc.props, String(p.id || "")), who);
+      return app.doc.props;
+    },
     add_marker: (p) => { const f = Number(p.frame ?? Math.round(app.frame)); app.mutate("Marker " + p.name, () => app.doc.addMarker(f, String(p.name || "marker")), who); return app.doc.markers; },
     set_view: (p) => {
       const vh = app.views.main;
@@ -192,6 +253,17 @@ export function makeApi(app) {
       if (p.onion !== undefined) { app.onion.on = !!p.onion; app.applyNow(); }
       if (p.tool) app.setTool(p.tool);
       if (p.bone) app.selectBone(p.bone);
+      if (p.focus_bone !== undefined || p.yaw !== undefined || p.pitch !== undefined || p.dist !== undefined) {
+        const v = vh.views[Number(p.index || 0)];
+        if (v) {
+          if (p.yaw !== undefined) v.yaw = Number(p.yaw) * RAD;
+          if (p.pitch !== undefined) v.pitch = Number(p.pitch) * RAD;
+          if (p.focus_bone && app.stage.body.has(String(p.focus_bone))) v.target.copy(app.jointWorld(String(p.focus_bone)));
+          if (p.dist !== undefined) v.dist = Number(p.dist);
+          v.update();
+          vh.focused = v;   // the view a screenshot target=view uses
+        }
+      }
       app.emit("tool");
       return { layout: vh.layout, views: vh.views.map((v) => v.preset) };
     },
@@ -206,6 +278,13 @@ export function makeApi(app) {
       if (kind === "view" && p.index !== undefined) app.views.main.focused = app.views.main.views[Number(p.index)] || app.views.main.focused;
       const path = await app.ui.picture(kind === "view" ? "view" : "sheet", Number(p.width || 1920), Number(p.height || 1080), Number(p.cols || 8), p.path || "");
       return path ? { path } : { error: "render failed" };
+    },
+    import_motion: async (p) => {
+      if (app.history.dirty() && !p.discard) return { error: `the open clip ${app.doc.name} has unsaved changes: save first, or pass discard: true` };
+      const opts = { ...p };
+      delete opts.path;
+      delete opts.discard;
+      return app.importMotion(String(p.path || ""), opts, who);
     },
     checks: () => app.runChecks(),
     transition_clip: async (p) => {

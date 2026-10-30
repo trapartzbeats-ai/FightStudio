@@ -6,6 +6,10 @@ import { boneRot, rotQuat, eulerOf, sub3, add3, lerp3, dist3, v3, DEG, RAD, pose
 import * as R from "./core/rig.js";
 import * as E from "./core/evalc.js";
 import { History } from "./core/history.js";
+import * as A from "./core/adjust.js";
+import * as M from "./core/merge.js";
+import * as F from "./core/feet.js";
+import * as MI from "./core/motion_import.js";
 
 export class App extends EventTarget {
   constructor() {
@@ -102,7 +106,7 @@ export class App extends EventTarget {
     E.solvePose(this.doc, this.frame, st.body, this.bones, this.ctx, this.editablePose());
     st.model.position.y = 0;
     st.body.update();
-    if (this.show.gameFeet && this.doc.plant) st.plant(this.ankle);
+    if (this.show.gameFeet && this.doc.plant) F.ground(st.body, st.model, 0, true);   // the match's feet: real soles on the floor, flat
     st.updateOnion(this);
     if (this.show.props) st.placeProps(this);
     this.views && this.views.dirty();
@@ -195,7 +199,7 @@ export class App extends EventTarget {
     if (limb) {
       const ids = R.LIMBS[limb];
       const keep = this.keepEnd ? body.worldQuat(ids[2]) : null;
-      E.solveTwoBone(body, ids[0], ids[1], ids[2], targetWorld, E.autoPole(body, limb, ...ids), keep, 1);
+      E.solveTwoBone(body, ids[0], ids[1], ids[2], targetWorld, null, keep, 1);
       ids.forEach((n) => touched.add(n));
     } else if (bone === "hips") {
       return this.dragMove(targetWorld.clone().sub(body.worldPos("hips")));
@@ -615,6 +619,92 @@ export class App extends EventTarget {
     this.say(`Baked ${baked.length} frames into keys; layers muted, constraints off (undo brings them back).`, "ok");
   }
 
+  // Adjust (core/adjust.js): `bone` turned by `turn` (radians, the total for this span) on top of its keys, over a scope: "all"
+  // frames, "frame" = around frame `at` (-1: the current one) easing over `ease` frames, "range" = from..to (to -1: the end).
+  // mirror: the other side gets the mirrored turn. A zero turn removes the adjustment. Returns the adjustment layers.
+  adjustPart(bone, turn, scope = "all", at = -1, from = 0, to = -1, ease = 6, mirror = false, who = "you") {
+    if (!this.bones.includes(bone)) { this.say(`No bone ${bone} on ${this.fighter}.`, "warn"); return []; }
+    if (at < 0) at = Math.round(this.frame);
+    if (to < 0) to = this.doc.frames;
+    const sp = A.span(scope, at, from, to, ease);
+    const targets = [[bone, turn]];
+    if (mirror && R.sideOf(bone) && this.bones.includes(R.mirrorName(bone))) targets.push([R.mirrorName(bone), R.mirrorEuler(turn)]);
+    const out = [];
+    this.mutate(`Adjust ${bone}`, () => {
+      for (const [b, v] of targets) {
+        const l = A.find(this.doc, b, scope, sp);
+        if (Math.hypot(...v) < 1e-5) { if (l) this.doc.removeById(this.doc.layers, l.id); continue; }
+        const def = A.layerDef(b, scope, sp, v);
+        if (!l) out.push(this.doc.addLayer(def));
+        else { Object.assign(l, def); out.push(l); }
+      }
+    }, who);
+    return out;
+  }
+
+  // the turn an adjustment of `bone` with this scope has now (radians; zero = none)
+  adjustValue(bone, scope = "all", at = -1, from = 0, to = -1, ease = 6) {
+    if (at < 0) at = Math.round(this.frame);
+    if (to < 0) to = this.doc.frames;
+    return A.value(A.find(this.doc, bone, scope, A.span(scope, at, from, to, ease)));
+  }
+
+  // take an adjustment off (its id), or every adjustment of a bone, or all of them (bone "")
+  adjustRestore(id = "", bone = "", who = "you") {
+    const gone = A.adjustLayers(this.doc).filter((l) => (id ? l.id === id : !bone || l.bone === bone));
+    if (!gone.length) return 0;
+    this.mutate(`Restore ${bone || (id ? "adjustment" : "all adjustments")}`, () => gone.forEach((l) => this.doc.removeById(this.doc.layers, l.id)), who);
+    this.say(`Restored ${gone.length} adjustment${gone.length === 1 ? "" : "s"}: the keys are as they were.`, "ok");
+    return gone.length;
+  }
+
+  // Merge (core/merge.js): `clip` on top of the open clip, giving only `parts` (M.PARTS), its frame 0 at `start` (-1: the
+  // current frame), blending in and out over that many frames
+  async mergeAdd(clip, parts = M.DEFAULT_PARTS, start = -1, blendIn = 10, blendOut = 10, weight = 1, cycle = false, who = "you") {
+    if (!(await E.preloadClip(clip))) { this.say(`No clip named ${clip}.`, "warn"); return null; }
+    if (start < 0) start = Math.round(this.frame);
+    const l = await this.addLayer(M.layerDef(clip, parts, start, blendIn, blendOut, weight, cycle), who);
+    this.say(`${clip} on top from f${start} (${parts.join(", ")}). Play to see it; Bake makes one clip.`, who !== "you" ? "agent" : "ok");
+    return l;
+  }
+
+  // change a clip on top: parts, start, blend_in / blend_out, weight, cycle, speed, mute (the fields that follow move with it)
+  async mergeSet(id, props, who = "you") {
+    const l = this.doc.layerById(id);
+    if (!l) return;
+    const p = { ...props };
+    if ("blend_in" in p) { p.fade_in = p.blend_in; delete p.blend_in; }
+    if ("blend_out" in p) { p.fade_out = p.blend_out; delete p.blend_out; }
+    await this.setLayer(id, M.follow(l, p), who);
+  }
+
+  // the merge as ONE new clip (opens unsaved; the base clip is not touched)
+  mergeBake(name, who = "you") {
+    if (!/^[A-Za-z0-9_\-]+$/.test(String(name))) return { error: "bad clip name" };
+    if (!M.mergeLayers(this.doc).length) { this.say("Add a clip on top first (Merge panel).", "warn"); return { error: "no clips on top" }; }
+    const base = this.doc.name;
+    const nd = M.bake(this.doc, this.stage.probe, this.bones, name);
+    this._setDoc(nd, true);
+    if (who !== "you") this.agentFlash = 1;
+    this.say(`Merged into ${name}: ${nd.frames} frames, ${nd.keys.length} keys (${base} is unchanged). Save it to keep it.`, who !== "you" ? "agent" : "ok");
+    return { name, frames: nd.frames, keys: nd.keys.length, base };
+  }
+
+  // a merged clip's recipe back as a live setup: its base opens with the clips on top again (changes to the open clip are lost)
+  async mergeRebuild(who = "you") {
+    const r = this.doc.extra.merge;
+    if (!r) return false;
+    const madeFrom = this.doc.name;
+    if (!(await this.openClip(String(r.base || ""), true))) { this.say(`The base clip ${r.base} is gone.`, "warn"); return false; }
+    for (const d of r.layers || []) {
+      await E.preloadClip(String(d.clip));
+      await this.addLayer(M.layerDef(String(d.clip), d.parts || M.DEFAULT_PARTS, Number(d.start || 0), Number(d.blend_in || 0), Number(d.blend_out || 0),
+        Number(d.weight ?? 1), !!d.cycle, Number(d.speed ?? 1)), who);
+    }
+    this.say(`Rebuilt the merge behind ${madeFrom}: ${this.doc.name} with ${(r.layers || []).length} clips on top.`, "ok");
+    return true;
+  }
+
   async makeTransitionClip(clipB, at, blend, name, who = "you") {
     const cb = await E.preloadClip(clipB);
     if (!cb) { this.say(`No clip named ${clipB}.`, "warn"); return false; }
@@ -630,6 +720,24 @@ export class App extends EventTarget {
     this._setDoc(nd, true);
     this.say(`Made ${name} (${nd.frames} frames). Save it to keep it.`, "ok");
     return true;
+  }
+
+  // outside motion (a Mixamo FBX, a GLB / glTF with a Mixamo-style skeleton) onto our rig as a new, unsaved clip
+  // (core/motion_import.js). opts: name, anim, in_place, limits, fingers, plant, loop, tolerance. Returns the import report or {error}.
+  async importMotion(path, opts = {}, who = "you") {
+    const url = await window.host.motionUrl(String(path));
+    if (!url) { this.say(`Import: no FBX / GLB / glTF at ${path}.`, "error"); return { error: "no FBX / GLB / glTF at " + path }; }
+    if (opts.name && !/^[A-Za-z0-9_\-]+$/.test(String(opts.name))) return { error: "bad clip name" };
+    const src = await MI.loadSource(url, String(path));
+    const r = MI.retarget(src, this.stage.probe, opts);
+    if (r.error) { this.say(`Import: ${r.error}.`, "error"); return r; }
+    this._setDoc(Doc.fromClip(r.clip), true);
+    const rep = r.report;
+    if (who !== "you") this.agentFlash = 1;
+    const file = String(path).split(/[\\/]/).pop();
+    this.say(`Imported ${rep.name} from ${file}: ${rep.bones} bones, ${rep.frames} frames, ${rep.keys} keys${rep.loop ? ", loops" : ""}${rep.plant ? ", planted" : ""}` +
+      `${rep.clamped > 0 ? `, ${rep.clamped} joint turns kept inside the rig limits` : ""}. Save it to keep it.`, who !== "you" ? "agent" : "ok");
+    return rep;
   }
 
   // ================================================================ clips and fighters
@@ -826,6 +934,46 @@ export class App extends EventTarget {
     if (this.doc.outsideEdit) out.push({ level: "warn", f: -1, text: "keys were edited outside after a bake; layers / constraints were switched off" });
     if (this.pending) out.push({ level: "warn", f: Math.round(this.frame), text: `the pose at f${Math.round(this.frame)} is changed but not keyed` });
     if (!out.length) out.push({ level: "ok", f: -1, text: "All good: knees, limits, loop seam, feet." });
+    return out;
+  }
+
+  // per frame, how the feet stand once the match grounds them (CBFeet on the probe body; changes nothing):
+  // {planted, soles: {footL: {tilt0 (degrees the model's own sole is off level at rest), ankle_cm (ankle over the sole)}},
+  //  frames: [{f, footL: {state, low_cm, tilt}, footR}], counts: {state: foot-frames}}
+  // state: "flat" standing levelled on the floor | "pivot" on its toes / heel (the clip keys the ankle there, or the leg cannot
+  // put it flat there) | "limit" standing with the heel up, the ankle at its natural bend | "sink" into the floor (a clip that is
+  // not planted) | "air" off the floor
+  feetReport(step = 1) {
+    const body = this.stage.probe;
+    const model = body.root;
+    const soles = F.soleInfo(body);
+    const out = { planted: this.doc.plant, soles: {}, frames: [], counts: {} };
+    const r1 = (x) => Math.round(x * 10) / 10;
+    for (const b in soles) out.soles[b] = { tilt0: r1(soles[b].tilt0), ankle_cm: r1(soles[b].h * body.bone(b).getWorldScale(new THREE.Vector3()).y * 100) };
+    for (let f = 0; f <= this.doc.frames; f += Math.max(1, step | 0)) {
+      this.finalPoseOn(body, f);
+      model.position.y = 0;
+      body.update();
+      const st = F.standing(body, soles);
+      const did = this.doc.plant ? F.ground(body, model, 0, true) : {};
+      const row = { f };
+      for (const b in soles) {
+        const low = F.lowest(body, b, soles);
+        const tilt = soles[b].n.clone().applyQuaternion(body.worldQuat(b)).angleTo(new THREE.Vector3(0, 1, 0)) * DEG;
+        let state = "air";
+        if (low < -0.01) state = "sink";
+        else if (low < 0.05) {
+          if (st[b].pivot >= 0.5 || st[b].w < 0.5) state = "pivot";
+          else if (did[b] && did[b].limit && tilt > 8) state = "limit";
+          else state = "flat";
+        }
+        row[b] = { state, low_cm: r1(low * 100), tilt: r1(tilt) };
+        out.counts[state] = (out.counts[state] || 0) + 1;
+      }
+      out.frames.push(row);
+    }
+    model.position.y = 0;
+    body.update();
     return out;
   }
 

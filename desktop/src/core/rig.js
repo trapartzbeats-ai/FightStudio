@@ -75,10 +75,12 @@ export const DEFAULT_CONTROLS = [
 ];
 
 export const rigData = { controls: DEFAULT_CONTROLS.map((c) => structuredClone(c)), limits: structuredClone(DEFAULT_LIMITS) };
+let rigFile = {};   // the whole file as read: its other fields (hinge, notes) are written back untouched
 
 export async function loadRigData() {
   const d = await window.host.loadData("animator_rig.json");
   if (d && d.controls) {
+    rigFile = d;
     rigData.controls = d.controls;
     rigData.limits = d.limits || structuredClone(DEFAULT_LIMITS);
   } else {
@@ -86,8 +88,11 @@ export async function loadRigData() {
   }
 }
 
+// joints that bend on one axis only (data/animator_rig.json "hinge"): the IK bends them on X and turns the limb to the pole
+export const isHinge = (b) => (rigFile.hinge || ["elbowL", "elbowR", "kneeL", "kneeR"]).includes(b);
+
 export function saveRigData() {
-  return window.host.saveData("animator_rig.json", { version: 1, controls: rigData.controls, limits: rigData.limits });
+  return window.host.saveData("animator_rig.json", { ...rigFile, version: rigFile.version ?? 1, controls: rigData.controls, limits: rigData.limits });
 }
 
 export function groupOf(b) {
@@ -140,6 +145,18 @@ export function clampLimits(b, e) {
   const out = [...e];
   ["x", "y", "z"].forEach((ax, i) => {
     if (lim[ax]) out[i] = clamp(out[i], lim[ax][0], lim[ax][1]);
+  });
+  return out;
+}
+
+// an edit on top of the clip never turns a joint past its rig limits (knees never bend forward); where the clip itself is
+// already past a limit, the clip's own value is the edge (an edit never makes it worse)
+export function withinLimits(b, e, before) {
+  const lim = rigData.limits[b];
+  if (!lim) return e;
+  const out = [...e];
+  ["x", "y", "z"].forEach((ax, i) => {
+    if (lim[ax]) out[i] = clamp(e[i], Math.min(lim[ax][0], before[i]), Math.max(lim[ax][1], before[i]));
   });
   return out;
 }

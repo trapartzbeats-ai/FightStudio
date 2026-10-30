@@ -3,8 +3,9 @@
 // Eulers. A port of the Godot Animator's core/eval.gd: both apps bake the same keys.
 import * as THREE from "three";
 import { poseAt, FOLLOW, lerp3, add3, sub3, mul3, v3, clamp } from "./clip.js";
-import { maskBones, LIMBS, limbOfEnd, mirrorEuler } from "./rig.js";
+import { maskBones, LIMBS, limbOfEnd, mirrorEuler, withinLimits, isHinge, clampLimits, rigData } from "./rig.js";
 import { fillKey } from "./doc.js";
+import { soleInfo, lowest } from "./feet.js";
 
 const clipCache = new Map();
 let loadClipFn = null;
@@ -76,7 +77,8 @@ export function layerPose(doc, f, bones, skipId = "") {
     for (const b of lb) {
       const cur = pose[b] || [0, 0, 0];
       const v = lp[b] || [0, 0, 0];
-      pose[b] = over ? lerp3(cur, v, w) : add3(cur, mul3(v, w));
+      const nv = over ? lerp3(cur, v, w) : add3(cur, mul3(v, w));
+      pose[b] = l.adjust ? withinLimits(b, nv, cur) : nv;   // an adjustment stays inside the joint's natural range
     }
     if (lb.includes("hips")) for (const ax of ["_dy", "_dx", "_dz"]) {
       const c0 = pose[ax] || 0, v0 = lp[ax] || 0;
@@ -188,8 +190,11 @@ function arc(u, v) {
   return new THREE.Quaternion().setFromUnitVectors(u.clone().normalize(), v.clone().normalize());
 }
 
-// two-bone IK; endQ = hold the end bone's world orientation (feet stay flat), null = it turns with the lower bone
+// two-bone IK; pole = where the middle joint points (null: its own bend, or forward for a leg / back for an arm); endQ = hold
+// the end bone's world orientation (feet stay flat), null = it turns with the lower bone
 export function solveTwoBone(body, a, b, c, target, pole, endQ, w) {
+  if (isHinge(b)) return solveHinge(body, a, b, c, target, pole, endQ, w);
+  if (!pole) pole = autoPole(body, a, a, b, c);
   const pa = body.worldPos(a), pb = body.worldPos(b), pc = body.worldPos(c);
   const ga = body.worldQuat(a), gb = body.worldQuat(b);
   const l1 = pa.distanceTo(pb), l2 = pb.distanceTo(pc);
@@ -225,6 +230,43 @@ export function solveTwoBone(body, a, b, c, target, pole, endQ, w) {
   if (endQ) body.setWorldQuat(c, endQ, w);
 }
 
+// two-bone IK for a hinge (knee, elbow): the middle joint only bends on its X, inside its limits (so a knee never bends forward
+// and never twists), the upper bone aims the limb at the target along the shortest arc (the bend keeps the plane the limb
+// already bends in), then, when a pole is given, turns about that line so the joint points at it. The joint limits never fight
+// the result (the old free solve put twist into the thigh that the limits then clamped, and the foot missed).
+function solveHinge(body, a, b, c, target, pole, endQ, w) {
+  const bones = [a, b, c].map((n) => body.bone(n));
+  const before = bones.map((x) => x.quaternion.clone());
+  const pa = body.worldPos(a);
+  const want = target.distanceTo(pa);
+  const e = clampLimits(b, body.localEuler(b));
+  const [lo, hi] = (rigData.limits[b] || {}).x || [-Math.PI, Math.PI];
+  const miss = (x) => { body.setLocalEuler(b, [x, e[1], e[2]]); return Math.abs(body.worldPos(c).distanceTo(pa) - want); };
+  let best = e[0], bm = Infinity;
+  const N = 48, step = (hi - lo) / N;
+  for (let i = 0; i <= N; i++) { const x = lo + step * i, m = miss(x); if (m < bm) { bm = m; best = x; } }
+  let l = Math.max(lo, best - step), r = Math.min(hi, best + step);
+  for (let it = 0; it < 30; it++) {
+    const m1 = l + (r - l) / 3, m2 = r - (r - l) / 3;
+    if (miss(m1) < miss(m2)) r = m2; else l = m1;
+  }
+  body.setLocalEuler(b, [(l + r) / 2, e[1], e[2]]);
+  body.setWorldQuat(a, arc(body.worldPos(c).sub(pa), target.clone().sub(pa)).multiply(body.worldQuat(a)));
+  const axis = target.clone().sub(pa).normalize();
+  const k = body.worldPos(b).sub(pa), pv = pole ? pole.clone().sub(pa) : new THREE.Vector3();
+  k.sub(axis.clone().multiplyScalar(k.dot(axis)));
+  pv.sub(axis.clone().multiplyScalar(pv.dot(axis)));
+  if (pole && k.length() > 1e-5 && pv.length() > 1e-5) {
+    const ang = Math.atan2(axis.dot(k.clone().cross(pv)), k.dot(pv));
+    body.setWorldQuat(a, new THREE.Quaternion().setFromAxisAngle(axis, ang).multiply(body.worldQuat(a)));
+  }
+  if (endQ) body.setWorldQuat(c, endQ);
+  if (w < 1) {
+    bones.forEach((x, i) => x.quaternion.copy(before[i].clone().slerp(x.quaternion.clone(), clamp(w, 0, 1))));
+    body.update();
+  }
+}
+
 export function autoPole(body, limb, a, b, c) {
   const pa = body.worldPos(a), pb = body.worldPos(b), pc = body.worldPos(c);
   const mid = pa.clone().add(pc).multiplyScalar(0.5);
@@ -245,7 +287,7 @@ function ik(c, f, body, w, touched) {
   const ids = limbIds(body, c.limb);
   if (!ids) return;
   const t = targetPoint(c.target, f, body);
-  const pole = c.pole && Object.keys(c.pole).length ? targetPoint(c.pole, f, body) : autoPole(body, c.limb, ...ids);
+  const pole = c.pole && Object.keys(c.pole).length ? targetPoint(c.pole, f, body) : null;
   const keep = c.keep_end !== false ? body.worldQuat(ids[2]) : null;
   solveTwoBone(body, ids[0], ids[1], ids[2], t, pole, keep, w);
   ids.forEach((n) => touched.add(n));
@@ -270,7 +312,7 @@ function pin(c, body, w, touched, ctx) {
     const ids = limbIds(body, limb);
     if (!ids) return;
     const keep = what === "both" ? cap.q : body.worldQuat(ids[2]);
-    solveTwoBone(body, ids[0], ids[1], ids[2], cap.p, autoPole(body, limb, ...ids), keep, w);
+    solveTwoBone(body, ids[0], ids[1], ids[2], cap.p, null, keep, w);
     ids.forEach((n) => touched.add(n));
     return;
   }
@@ -330,8 +372,10 @@ function floor(c, body, w, touched, ctx) {
   if (!body.has("hips")) return;
   const fy = Number(c.height || 0);
   let need = -Infinity;
+  const soles = soleInfo(body);
   for (const n of c.bones || ["footL", "footR"]) {
     if (!body.has(n)) continue;
+    if (soles[n]) { need = Math.max(need, fy - lowest(body, n, soles)); continue; }   // a foot: its real sole (the mesh), not the ankle
     need = Math.max(need, fy + restHeight(body, n, ctx, Number(c.radius ?? 0.04)) - body.worldPos(n).y);
   }
   if (need === -Infinity || ((c.mode || "floor") === "floor" && need <= 0)) return;

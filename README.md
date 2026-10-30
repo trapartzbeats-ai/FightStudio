@@ -6,7 +6,7 @@ format (`data/clips/<name>.json`), so a clip made in one opens in the others:
 | Part | Where | What it is |
 |---|---|---|
 | **Fight Studio Animator** | `game/packs/city_breaker/animator/` | The animation app, in Godot 4.7. |
-| **Fight Studio Desktop** | `desktop/` | The same app as an Electron + three.js desktop program, no Godot needed. |
+| **Fight Studio Desktop** | `desktop/`, installer on [Releases](https://github.com/trapartzbeats-ai/FightStudio/releases) | The same app as an Electron + three.js desktop program, no Godot needed. |
 | **fight-studio MCP** | `game/packs/city_breaker/animator/mcp/` | An MCP server that lets agents animate in either app. |
 | **RMT Wrap** | `addons/rmt_wraps/`, `game/packs/city_breaker/wraps.gd` | Collision Wrap: body parts never go through their own body, the floor, the stage or another fighter. |
 
@@ -69,18 +69,29 @@ The full manual is `game/packs/city_breaker/animator/README.md`.
 
 ## Fight Studio Desktop (Electron)
 
+**Install (Windows 10 / 11, 64-bit):** download `FightStudioDesktop-Setup-1.1.0.exe` from the
+[Releases](https://github.com/trapartzbeats-ai/FightStudio/releases) page and run it.
+- On first start it asks for the game project folder: the Godot project with `game/packs/city_breaker` in it. File > Choose
+  the game project folder changes it later.
+- The installer is not code-signed, so SmartScreen may say "Windows protected your PC": click More info > Run anyway.
+
+**From source:**
+
 ```
 cd desktop
 npm install
 npm start            # -- --fighter=carter --clip=a_jab1 --project=<your Godot project>
-npm run selftest     # 45 checks
+npm run selftest     # 91 checks
+npm run dist         # builds dist/FightStudioDesktop-Setup-<version>.exe
 ```
 
 - Same file format, interpolation, rules and bake signature as the Godot app.
+- The same tools too: Adjust, Merge, Feet (real soles, matched to the game's `CBFeet` within 2 mm), Mixamo motion import
+  (matched limb by limb to the Godot import) and grip proxies.
 - Loads fighters straight from the game's GLBs.
 - Agent API on `:47651`.
-- File access is limited to the project's clip, pose and data folders. Set the folder with `--project=`; the default is the
-  author's path.
+- File access is limited to the project's clip, pose and data folders. Backups, trash and renders go to
+  `Documents/Fight Studio` (or `D:/Cache` when that folder exists).
 
 ## fight-studio MCP
 

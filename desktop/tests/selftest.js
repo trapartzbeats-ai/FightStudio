@@ -5,8 +5,11 @@ import * as THREE from "three";
 import { Doc, poseOfKey, sig } from "../src/core/doc.js";
 import * as E from "../src/core/evalc.js";
 import * as R from "../src/core/rig.js";
-import { poseAt, rotQuat, eulerOf, dist3 } from "../src/core/clip.js";
+import { poseAt, rotQuat, eulerOf, dist3, DEG, RAD } from "../src/core/clip.js";
 import { makeApi } from "../src/api.js";
+import * as A from "../src/core/adjust.js";
+import * as M from "../src/core/merge.js";
+import * as F from "../src/core/feet.js";
 
 export async function selftest(app) {
   const lines = [];
@@ -154,7 +157,141 @@ export async function selftest(app) {
   ok(!r.ok, "open_clip protects unsaved work");
   r = await call("screenshot", { target: "sheet", width: 640, height: 360, cols: 4, path: "D:/Cache/fight_studio_dev/desktop_sheet_test.png" });
   ok(r.ok, "api screenshot sheet " + JSON.stringify(r));
+  r = await call("get_pose", { frame: 5, bones: ["kneeR"], final: false });
+  ok(near(r.result.bones.kneeR[1], 0, 0.01) && near(r.result.bones.kneeR[2], 0, 0.01) && r.result.bones.kneeR[0] > 0, "ik bends the knee on its hinge only " + JSON.stringify(r.result.bones.kneeR));
+  ok(R.isHinge("kneeL") && R.isHinge("elbowR") && !R.isHinge("armR"), "hinge joints from animator_rig.json");
   app.history.markSaved();
+
+  // ADJUST: a turn on top of the keys, over a scope; the keys never change; limits hold; restore takes it off
+  await app.openClip("w_walk", true);
+  const keysBefore = JSON.stringify(app.doc.keys);
+  const armAt = (f) => E.layerPose(app.doc, f, app.bones).armR;
+  const raw7 = armAt(7);
+  app.adjustPart("armR", [-20 * RAD, 0, 0], "all");
+  ok(near(armAt(7)[0] - raw7[0], -20 * RAD, 1e-4) && JSON.stringify(app.doc.keys) === keysBefore, "adjust turns a part on every frame, keys untouched");
+  ok(near(app.adjustValue("armR", "all")[0], -20 * RAD, 1e-4), "adjust value reads back");
+  app.adjustPart("armR", [-30 * RAD, 0, 0], "all");
+  ok(A.adjustLayers(app.doc).length === 1 && near(armAt(7)[0] - raw7[0], -30 * RAD, 1e-4), "adjusting again sets the total (one adjustment)");
+  app.adjustPart("armR", [-30 * RAD, 0, 0], "all");
+  const armMax = R.rigData.limits.armR && R.rigData.limits.armR.x ? R.rigData.limits.armR.x[1] : Infinity;
+  app.adjustPart("armL", [3, 0, 0], "range", -1, 0, 4, 0);
+  let past = false;
+  for (let f = 0; f <= 4; f++) { const e = E.layerPose(app.doc, f, app.bones).armL, b0 = poseAt(app.doc.source(), f, app.bones).armL; if (e[0] > Math.max(R.rigData.limits.armL?.x?.[1] ?? Infinity, b0[0]) + 1e-6) past = true; }
+  ok(!past && armMax < Infinity, "an adjustment stops at the joint's limit");
+  app.adjustRestore("", "armL");
+  app.adjustPart("armL", [0, 0, 10 * RAD], "frame", 12, 0, -1, 4, true);
+  ok(A.adjustLayers(app.doc).length === 3 && near(E.layerPose(app.doc, 2, app.bones).armL[2], poseAt(app.doc.source(), 2, app.bones).armL[2], 1e-6), "around one frame, mirrored, nothing outside its ease");
+  app.adjustPart("kneeL", [-90 * RAD, 0, 0], "all");
+  let fwd = false;
+  for (let f = 0; f <= app.doc.frames; f++) if (E.layerPose(app.doc, f, app.bones).kneeL[0] < -1e-6) fwd = true;
+  ok(!fwd, "an adjustment never bends a knee forward");
+  ok(app.adjustRestore("", "armR") === 2 && near(armAt(7)[0], raw7[0], 1e-6), "restore one part (its all-frames and mirrored adjustments)");
+  app.undo();
+  ok(near(armAt(7)[0] - raw7[0], -30 * RAD, 1e-4), "restore undoes");
+  r = await call("adjustments", {});
+  ok(r.ok && r.result.length === 4 && r.result.some((x) => x.bone === "armR" && near(x.turn[0], -30, 0.01)), "api adjustments");
+  r = await call("adjust", { bone: "head", y: 15 });
+  ok(r.ok && r.result.layers.length === 1, "api adjust");
+  r = await call("adjust_restore", {});
+  ok(r.ok && r.result.restored === 5 && JSON.stringify(app.doc.keys) === keysBefore, "api adjust_restore all");
+
+  // MERGE: the base gives the body, a clip on top gives the parts you pick; bake makes one new clip with its recipe
+  app.history.markSaved();
+  await app.openClip("w_walk", true);
+  const top = (await window.host.listClips()).find((n) => n !== "w_walk" && /^a_.*jab/.test(n)) || "a_jab1";
+  const ml = await app.mergeAdd(top, ["Arm R"], 6, 4, 4);
+  ok(ml && ml.merge && ml.mask.join() === "armR,elbowR,handR" && ml.offset === 6 && ml.end === 6 + Number(E.clipSrc(top).frames), "merge adds a clip on top (parts mask, start, end)");
+  const src = E.clipSrc(top);
+  const mid = 6 + Math.round(Number(src.frames) / 2);
+  const mp = E.layerPose(app.doc, mid, app.bones);
+  ok(dist3(mp.armR, poseAt(src, mid - 6, app.bones).armR) < 1e-4 && dist3(mp.legL, poseAt(app.doc.source(), mid, app.bones).legL) < 1e-6, "top clip gives its arm, the base keeps its legs");
+  await app.mergeSet(ml.id, { start: 10, parts: ["Arm R", "Head"] });
+  const ml2 = app.doc.layerById(ml.id);
+  ok(ml2.offset === 10 && ml2.end === 10 + Number(src.frames) && ml2.mask.includes("head"), "merge set: start moves the clip, parts the mask");
+  const want = M.length(app.doc);
+  const baked = app.mergeBake("zz_desktop_merged");
+  ok(baked.name === "zz_desktop_merged" && app.doc.frames === want && app.doc.extra.merge && app.doc.extra.merge.base === "w_walk" && app.doc.isNew !== false, "merge bake: one new clip with its recipe");
+  ok(app.doc.keys.length < app.doc.frames && !app.doc.layers.length, "merge bake thins the keys, no layers left");
+  ok((await app.mergeRebuild()) && app.doc.name === "w_walk" && M.mergeLayers(app.doc).length === 1, "rebuild the merge setup");
+  r = await call("merge", { clips: [{ clip: top, parts: ["Arm L"], start: 0 }], bake: true, name: "zz_desktop_merged2" });
+  ok(r.ok && r.result.baked && r.result.baked.name === "zz_desktop_merged2", "api merge + bake");
+  app.history.markSaved();
+
+  // FEET: soles read off the mesh match the game's bake; a planted clip stands on them, nothing sinks
+  const bake = (await window.host.loadData("feet_soles.json")) || {};
+  for (const k of ["carter", "vix"]) {
+    await app.setFighter(k);
+    const so = F.soleInfo(app.stage.probe);
+    const be = bake[`res://game/packs/city_breaker/assets/chars/${k}_fight.glb`] || {};
+    for (const b of ["footL", "footR"]) {
+      const s = so[b], g = be[b];
+      ok(s && g && Math.abs(s.tilt0 - g.tilt0) < 1.5 && Math.abs(s.h - g.h) < 0.004 * Math.max(1, g.size) && new THREE.Vector3(...g.n).angleTo(s.n) < 0.03,
+        `${k} ${b} sole like the game's bake (tilt ${s && s.tilt0.toFixed(1)} vs ${g && g.tilt0.toFixed(1)}, h ${s && s.h.toFixed(4)} vs ${g && g.h.toFixed(4)})`);
+    }
+    await app.openClip("w_walk", true);
+    const rep = app.feetReport(2);
+    ok(rep.planted && (rep.counts.flat || 0) > 0 && !rep.frames.some((x) => x.footL.low_cm < -1.5 || x.footR.low_cm < -1.5), `${k} planted walk: feet on the floor ${JSON.stringify(rep.counts)}`);
+    // the same as the game's CBFeet.ground, frame by frame (reference by ref_feet.gd)
+    const ref = (await (await fetch("file:///D:/Cache/fight_studio_dev/ref_feet.json").catch(() => null))?.json?.().catch(() => null)) || null;
+    if (ref && ref[k]) {
+      let worst = 0;
+      for (const x of rep.frames) {
+        const g = ref[k][String(x.f)];
+        if (g) worst = Math.max(worst, Math.abs(x.footL.low_cm / 100 - g[0]), Math.abs(x.footR.low_cm / 100 - g[1]));
+      }
+      ok(worst < 0.002, `${k} feet like the game's CBFeet.ground on every frame (worst ${(worst * 100).toFixed(2)} cm)`);
+    } else lines.push("skip feet reference (run ref_feet.gd)");
+    app.stage.probe.apply({});
+    app.stage.probe.root.position.y = 0;
+    F.ground(app.stage.probe, app.stage.probe.root, 0, true);
+    const lo = Math.min(F.lowest(app.stage.probe, "footL"), F.lowest(app.stage.probe, "footR"));
+    ok(Math.abs(lo) < 0.002, `${k} at rest stands on its soles (lowest ${lo.toFixed(4)})`);
+    app.stage.probe.root.position.y = 0;
+  }
+
+  // GRIPS: a grey proxy in the hand by the game's grip frame
+  r = await call("add_prop", { shape: "cylinder", grip: "cylinder_R" });
+  ok(r.ok && app.doc.props.length === 1 && app.doc.props[0].grip === "cylinder_R", "api add_prop with a grip");
+  app.applyNow();
+  const pm = app.stage.props.children[0];
+  ok(pm && pm.visible && pm.position.distanceTo(app.jointWorld("fingersR")) < 0.15, "the grip proxy sits in the right hand");
+  r = await call("remove_prop", { all: true });
+  ok(r.ok && !app.doc.props.length, "api remove_prop all");
+  app.history.markSaved();
+
+  // MOTION IMPORT: a Mixamo FBX onto our rig, limb by limb the same as the Godot import (reference clips by ref_import.gd)
+  const SEGS = [["armL", "elbowL"], ["elbowL", "handL"], ["armR", "elbowR"], ["elbowR", "handR"], ["legL", "kneeL"], ["kneeL", "footL"], ["legR", "kneeR"], ["kneeR", "footR"], ["hips", "chest"], ["chest", "head"]];
+  const segDirs = (clip, f) => {
+    const body = app.stage.probe;
+    body.apply(poseAt(clip, f, app.bones));
+    return SEGS.map(([a, b]) => body.worldPos(b).sub(body.worldPos(a)).normalize());
+  };
+  for (const [k, file, ref] of [["vix", "D:/Projects/Vix and Carter/Running.fbx", "mx_running"], ["vix", "C:/Users/User/Downloads/Capoeira Spin Kick.fbx", "mx_capoeira_spin_kick"],
+    ["carter", "C:/Users/User/Downloads/Capoeira Spin Kick.fbx", "mx_capoeira_spin_kick"]]) {
+    const rc = await (await fetch(`file:///D:/Cache/fight_studio_dev/ref_${k}_${ref}.json`).catch(() => null))?.json?.().catch(() => null);
+    if (!rc || !(await window.host.motionUrl(file))) { lines.push(`skip import ${k} ${ref} (missing file or reference)`); continue; }
+    if (app.fighter !== k) await app.setFighter(k);
+    app.history.markSaved();
+    const rep = await app.importMotion(file, {});
+    ok(!rep.error && app.doc.name === ref && app.isNew, `import ${k} ${ref} opens unsaved ${JSON.stringify(rep)}`);
+    const mine = app.doc.toClip();
+    ok(mine.frames === rc.frames && mine.loop === rc.loop && mine.plant === rc.plant, `import ${k} ${ref}: frames / loop / plant as Godot (${mine.frames}/${mine.loop}/${mine.plant} vs ${rc.frames}/${rc.loop}/${rc.plant})`);
+    let worst = 0, hips = 0;
+    for (let f = 0; f <= rc.frames; f += 4) {
+      const a = segDirs(mine, f), b = segDirs(rc, f);
+      a.forEach((d, i) => (worst = Math.max(worst, d.angleTo(b[i]) * DEG)));
+      const pa = poseAt(mine, f, []), pb = poseAt(rc, f, []);
+      hips = Math.max(hips, Math.hypot(pa._dx - pb._dx, pa._dy - pb._dy, pa._dz - pb._dz));
+    }
+    ok(worst < 4 && hips < 0.03, `import ${k} ${ref}: limbs within ${worst.toFixed(2)} deg, hips within ${(hips * 100).toFixed(1)} cm of the Godot import`);
+    let fwdKnee = false;
+    for (const key of mine.keys) for (const b of ["kneeL", "kneeR"]) if ((key.rot[b] || [0])[0] < 0) fwdKnee = true;
+    ok(!fwdKnee, `import ${k} ${ref}: knees never bend forward`);
+  }
+  r = await call("import_motion", { path: "C:/nowhere/none.fbx", discard: true });
+  ok(!r.ok, "api import_motion refuses a missing file");
+  app.history.markSaved();
+  if (app.fighter !== "vix") await app.setFighter("vix");
   await app.openClip("w_walk", true);
   return { pass, fail, lines };
 }

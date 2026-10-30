@@ -1,20 +1,69 @@
 {
   "name": "fight-studio-desktop",
   "productName": "Fight Studio Desktop",
-  "version": "1.0.0",
-  "description": "Fight Studio animation app (Electron + three.js) for City Breaker / BSP Universe clips, with an agent API for MCP.",
+  "version": "1.1.0",
+  "description": "Fight Studio animation app (Electron + three.js) for City Breaker / BSP Universe clips: keys, layers, constraints, Adjust, Merge, Feet, Mixamo import, and an agent API for MCP.",
   "main": "main.js",
   "private": true,
   "scripts": {
     "start": "electron .",
-    "selftest": "electron . --selftest --hidden"
+    "selftest": "electron . --selftest --hidden",
+    "dist": "electron-builder --win nsis --x64"
   },
   "author": "RMT (Ro Made That)",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "devDependencies": {
-    "electron": "43.4.1"
+    "electron": "43.4.1",
+    "electron-builder": "^26.0.12"
   },
   "dependencies": {
     "three": "0.160.0"
+  },
+  "build": {
+    "appId": "com.rmt.fightstudio.desktop",
+    "productName": "Fight Studio Desktop",
+    "copyright": "RMT (Ro Made That)",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json",
+      "src/**/*",
+      "tests/**/*",
+      "!node_modules/three/src/**/*",
+      {
+        "from": "node_modules/three/examples/jsm",
+        "to": "node_modules/three/examples/jsm",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Fight Studio Desktop",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "artifactName": "FightStudioDesktop-Setup-${version}.exe"
+    }
   }
 }

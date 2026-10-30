@@ -105,6 +105,29 @@ export function boneRot(pose, name) {
   return e;
 }
 
+// drop the keys a straight line between their neighbours already gives (within tol radians; hips height counts 3x), as
+// CBAnimTools.reduce_keys; returns how many went
+export function reduceKeys(clip, bones, tol) {
+  const keys = sortedKeys(clip);
+  let removed = 0;
+  let i = 1;
+  while (i < keys.length - 1) {
+    const a = keys[i - 1], k = keys[i], b = keys[i + 1];
+    const t = (Number(k.f) - Number(a.f)) / (Number(b.f) - Number(a.f));
+    let worst = 0;
+    for (const bone of bones) {
+      const d = sub3(keyRot(k, bone), lerp3(keyRot(a, bone), keyRot(b, bone), t));
+      worst = Math.max(worst, Math.abs(d[0]), Math.abs(d[1]), Math.abs(d[2]));
+    }
+    const ay = Number(a.hips_dy || 0), by = Number(b.hips_dy || 0);
+    const dy = Math.abs(Number(k.hips_dy || 0) - (ay + (by - ay) * t)) * 3;
+    if (Math.max(worst, dy) <= tol) { keys.splice(i, 1); removed++; }
+    else i++;
+  }
+  clip.keys = keys;
+  return removed;
+}
+
 export function blankClip(name, frames = 24, fps = 30) {
   return { version: FORMAT, name, fps, frames, loop: false, override: false, keys: [{ f: 0, rot: {}, hips_dy: 0 }] };
 }

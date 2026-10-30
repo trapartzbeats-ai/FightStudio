@@ -57,6 +57,10 @@ function menus() {
           app.say(r.ok ? `Animato is baking ${app.fighter} in the background.` : r.error, r.ok ? "ok" : "error");
         }
       }],
+      ["Import motion (Mixamo FBX, GLB)...", () => shell.importMotion()],
+      ["Choose the game project folder...", async () => {
+        if (!app.history.dirty() || (await window.host.confirm(`"${app.doc.name}" has changes that are not saved. Switch projects anyway (changes are lost)?`))) window.host.changeProject();
+      }],
       ["Open this clip in the Godot Fight Studio Animator", () => window.host.openGodotAnimator(app.fighter, app.doc.name)],
       null,
       ["Quit", () => window.close()],
@@ -173,6 +177,7 @@ async function boot() {
   const main = new ViewHost(app, shell.canvasWrap, "4");
   views.add(main);
   await app.boot(stage, views);
+  P.setMcpPath(app.info.dirs.mcp);
   shell.buildMenus(menus());
   shell.buildToolbar();
   const dock = (title, make, where) => shell.addPanel(title, make, where);
@@ -181,6 +186,7 @@ async function boot() {
   dock("Sockets", P.Sockets(app), "left");
   dock("Properties", P.Props(app), "right_top");
   dock("Controls", P.Controls(app), "right_top");
+  dock("Adjust", P.Adjust(app), "right_top");
   dock("Layers", P.Layers(app), "right_top");
   dock("Constraints", P.Constraints(app), "right_top");
   dock("Outliner", P.Outliner(app), "right_bottom");
@@ -208,6 +214,8 @@ async function boot() {
     bar.append(b);
   }
   dock("Blend Lab", P.Blend(app), "bottom");
+  dock("Merge", P.Merge(app), "bottom");
+  dock("Feet", P.Feet(app), "bottom");
   dock("Agents", P.Agents(app), "bottom");
   dock("History", P.HistoryPanel(app), "bottom");
   dock("Render", P.Render(app), "bottom");

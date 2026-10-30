@@ -6,8 +6,12 @@ import { targetPoint } from "./core/evalc.js";
 import { DEG, RAD, v3 } from "./core/clip.js";
 import { PROP_SHAPES } from "./stage.js";
 import { renderPicture } from "./views.js";
+import * as A from "./core/adjust.js";
+import * as M from "./core/merge.js";
 
-const MCP = "D:/Games/BSP-Universe/game/packs/city_breaker/animator/mcp/fight_studio_mcp.py";
+// the MCP server ships with the game project's animator (game/packs/city_breaker/animator/mcp)
+let MCP = "game/packs/city_breaker/animator/mcp/fight_studio_mcp.py";
+export const setMcpPath = (p) => { if (p) MCP = String(p).replace(/\\/g, "/"); };
 export const mcpConfig = () => JSON.stringify({ mcpServers: { "fight-studio": { command: "python", args: [MCP] } } }, null, 2);
 const body = () => h("div", { class: "pbody" });
 const prompt = (app, text, value, fn) => app.ui.prompt(text, value, fn);
@@ -24,7 +28,7 @@ export function Clips(app) {
     row(button("OPEN", () => l.text() && app.openClip(l.text())), button("NEW", () => prompt(app, "Name for the new clip (starts from the pose on screen):", "my_clip", (n) => app.newClip(n, 30, 30, false, true))),
       button("DUPLICATE", () => prompt(app, `Save a copy of ${app.doc.name} as:`, app.doc.name + "_v2", (n) => app.saveAs(n)))),
     row(button("AS LAYER", () => { if (l.text()) { app.addLayer({ name: l.text(), source: "clip", clip: l.text(), mode: "override", mask: R.MASKS["Upper body"] }); app.ui.showPanel("Layers"); } }, "Blend the selected clip on top as a layer"),
-      button("TO TRASH", async () => { const n = l.text(); if (n && (await window.host.confirm(`Move ${n} to D:/Cache/fight_studio_trash?`))) { await app.trashClip(n); refill(); } }, "Clips are never deleted: they move to the trash folder"),
+      button("TO TRASH", async () => { const n = l.text(); if (n && (await window.host.confirm(`Move ${n} to ${app.info.dirs.trash}?`))) { await app.trashClip(n); refill(); } }, "Clips are never deleted: they move to the trash folder"),
       button("RELOAD", () => refill())));
   let all = [];
   async function refill(reload = false) {
@@ -288,6 +292,7 @@ export function Outliner(app) {
     tree.innerHTML = "";
     const counts = {};
     for (const k of app.doc.keys) for (const b in k.rot || {}) counts[b] = (counts[b] || 0) + 1;
+    const adjusted = A.adjustedBones(app.doc);
     for (const [g, bones] of R.grouped(app.bones)) {
       tree.append(h("div", { class: "tg", onclick: (e) => {
         if (e.offsetX < 18) { collapsed[g] = !collapsed[g]; refresh(); return; }
@@ -300,7 +305,7 @@ export function Outliner(app) {
         const side = R.sideOf(b);
         const lock = h("input", { type: "checkbox", checked: app.doc.isLocked(b), onclick: (e) => e.stopPropagation(), onchange: () => app.setLock(b, lock.checked ? "xyz" : "") });
         tree.append(h("div", { class: "tb" + (app.selBones.includes(b) ? " sel" : ""), onclick: (e) => app.selectBone(b, e.shiftKey) },
-          h("span", { style: `color:${side === "L" ? "#4fd1ff" : side === "R" ? "#ff5d8f" : "#f4efe6"}` }, b),
+          h("span", { style: `color:${side === "L" ? "#4fd1ff" : side === "R" ? "#ff5d8f" : "#f4efe6"}`, title: adjusted[b] ? "* adjusted (Adjust panel)" : "" }, (adjusted[b] ? "* " : "") + b),
           h("span", { class: "tc" }, app.doc.lockChannels(b) && !app.doc.isLocked(b) ? app.doc.lockChannels(b) : ""), lock, h("span", { class: "tc" }, String(counts[b] || 0))));
       }
     }
@@ -408,6 +413,241 @@ export function Blend(app) {
   return el;
 }
 
+// ==================================================================== ADJUST
+// press and drag left / right to turn (Shift for fine steps); one drag is one undo step
+function tiltDrag(onDelta, onEnd) {
+  const b = h("button", { class: "tilt", title: "Press and drag left / right to turn (hold Shift for fine steps)" }, "< TILT >");
+  b.style.cursor = "ew-resize";
+  b.onpointerdown = (e) => { b.setPointerCapture(e.pointerId); b._down = true; };
+  b.onpointermove = (e) => { if (b._down && e.movementX) onDelta(e.movementX * (e.shiftKey ? 0.05 : 0.25)); };
+  b.onpointerup = b.onpointercancel = () => { if (b._down) { b._down = false; onEnd(); } };
+  return b;
+}
+
+export function Adjust(app) {
+  const el = body();
+  let quiet = false;
+  const part = select([], "", (v) => { if (!quiet) app.selectBone(v); });
+  const both = check("both sides", false, () => {}, "The other side gets the same turn, mirrored");
+  const axisHint = hint("");
+  const rangeRow = row();
+  const scopeSel = select([["all", "all frames"], ["frame", "around this frame"], ["range", "frame range"]], "all", () => { rangeRow.style.display = scopeSel.value === "range" ? "" : "none"; load(); });
+  const easeIn = num(6, () => load(), { min: 0, max: 60, title: "Frames it eases in and out over (0 = sharp)" });
+  const fromIn = num(0, () => load(), { min: 0 }), toIn = num(30, () => load(), { min: 0 });
+  rangeRow.append(label("from f"), fromIn, label("to f"), toIn, button("PLAY RANGE", () => { const [a, b] = app.playRangeFrames(); fromIn.value = a; toIn.value = b; load(); }, "Use the IN / OUT play range"));
+  rangeRow.style.display = "none";
+  const deg = [], drag = [0, 0, 0];
+  const listBox = h("div");
+  el.append(heading("Adjust"), hint("Tilt a body part across the whole clip, a frame range, or around this frame, without touching its keys: the shoulders up on every frame of a walk, an arm straighter, the hands meeting for a clap. Pick the part (or click it in a view), the scope, then drag TILT on an axis. Adjusted parts get a * in the Outliner; RESTORE takes an adjustment off."),
+    row(label("part"), part, both), axisHint, row(label("on"), scopeSel, label("ease"), easeIn), rangeRow);
+  for (let i = 0; i < 3; i++) {
+    const n = num(0, () => { if (!quiet) apply(); }, { min: -180, max: 180, step: 0.5, width: 84, title: "Degrees, the total turn of this adjustment" });
+    deg.push(n);
+    // a drag edits the box live and lands as one undo step when you let go
+    const t = tiltDrag((d) => { drag[i] += d; n.value = Math.round((Number(n.value) + d) * 10) / 10; preview(); }, () => { drag[i] = 0; apply(); });
+    el.append(row(h("span", { class: "lbl", style: `color:${AX[i]};font-size:16px` }, "XYZ"[i]), t, n, label("deg"), button("0", () => { n.value = 0; apply(); }, "No turn on this axis")));
+  }
+  el.append(h("hr"), heading("Adjusted"), listBox,
+    row(button("RESTORE ALL", () => app.adjustRestore(), "Every adjustment off: the keys as they were"),
+      button("APPLY INTO KEYS", () => app.bakeToKeys(), "Bake layers (adjustments too) and constraints into plain keys (undo brings them back)")));
+  const turn = () => deg.map((n) => Number(n.value) * RAD);
+  const args = () => [scopeSel.value, -1, Number(fromIn.value), Number(toIn.value), Number(easeIn.value)];
+  const mirror = () => both.querySelector("input").checked && !!R.sideOf(app.selBone);
+  // while dragging: show it on the model without an undo step per pixel
+  let dragBase = null;
+  function preview() {
+    if (!dragBase) dragBase = app.doc.toDict();
+    app.doc.loadDict(dragBase);
+    const [scope, at, from, to, ease] = args();
+    const f = Math.round(app.frame);
+    const sp = A.span(scope, f, from, to < 0 ? app.doc.frames : to, ease);
+    const targets = [[app.selBone, turn()]];
+    if (mirror()) targets.push([R.mirrorName(app.selBone), R.mirrorEuler(turn())]);
+    for (const [b, v] of targets) {
+      const l = A.find(app.doc, b, scope, sp);
+      if (l) Object.assign(l, A.layerDef(b, scope, sp, v));
+      else app.doc.addLayer(A.layerDef(b, scope, sp, v));
+    }
+    app.applyNow();
+  }
+  function apply() {
+    if (dragBase) { app.doc.loadDict(dragBase); dragBase = null; }
+    app.adjustPart(app.selBone, turn(), ...args(), mirror());
+  }
+  function fill() {
+    quiet = true;
+    part.innerHTML = "";
+    for (const [, bones] of R.grouped(app.bones)) for (const b of bones) part.add(new Option(b));
+    quiet = false;
+  }
+  function showBone() {
+    quiet = true;
+    part.value = app.selBone;
+    both.querySelector("input").disabled = !R.sideOf(app.selBone);
+    axisHint.textContent = R.hint(app.selBone);
+    quiet = false;
+  }
+  function load() {
+    if (dragBase) return;
+    const v = app.adjustValue(app.selBone, ...args());
+    quiet = true;
+    deg.forEach((n, i) => (n.value = Math.round(v[i] * DEG * 10) / 10));
+    quiet = false;
+  }
+  function list() {
+    listBox.innerHTML = "";
+    const ls = A.adjustLayers(app.doc);
+    if (!ls.length) return listBox.append(hint("Nothing adjusted."));
+    for (const l of ls) listBox.append(row(h("span", { class: "txt", style: "flex:1" }, "* " + A.describe(l)), button("PICK", () => app.selectBone(l.bone), "Select this part"),
+      button("RESTORE", () => app.adjustRestore(l.id), "Take this adjustment off")));
+  }
+  app.on((w) => {
+    if (w === "fighter") fill();
+    if (["doc", "clip", "fighter"].includes(w)) list();
+    if (["sel", "clip", "fighter", "doc"].includes(w) || (w === "frame" && scopeSel.value === "frame")) { showBone(); load(); }
+  });
+  fill(); list(); showBone(); load();
+  return el;
+}
+
+// ==================================================================== FEET
+const FEET_COLORS = { flat: "#5cc773", pivot: "#f2ad40", limit: "#b88cf2", sink: "#eb4d4d", air: "#40454f" };
+const FEET_SAY = { flat: "standing flat on the floor", pivot: "on its toes / heel (pivot)", limit: "standing, heel up: the ankle is at its natural bend",
+  sink: "INTO the floor", air: "off the floor" };
+
+export function Feet(app) {
+  const el = body();
+  let report = {};
+  let dirty = true;
+  const planted = check("planted (ground the feet, as the match does)", false, (on) => app.setClipProp("plant", on), "Clips on the ground: on. Clips in the air (jumps, aerials, falls): off");
+  // the feet across the clip: one lane per foot, a cell per frame coloured by how it stands; click one to go to that frame
+  const lanes = h("canvas", { class: "feetlanes", height: 58, style: "width:100%;height:58px;cursor:pointer;display:block" });
+  const now = h("div", { class: "txt" }), counts = hint(""), soles = hint("");
+  // the lanes and this frame first: the dock is short on a laptop screen, the explanation goes last
+  el.append(row(heading("Feet"), planted, button("REFRESH", () => { dirty = true; tick(); }, "Measure the feet again")), lanes, now, counts, soles,
+    hint("Lanes: green flat on the floor, amber pivot (toes / heel), violet heel up at the ankle's limit, red INTO the floor, grey off it; click one to go to that frame. A planted clip stands each foot on its real sole (read from the model, which is not always level at rest), levels every standing foot and reaches the legs down with the knee's own bend; a foot the clip keys onto its toes or heel pivots there."));
+  const LABEL_W = 22;
+  function draw() {
+    const fr = report.frames || [];
+    const w = lanes.clientWidth || 240;
+    lanes.width = w;
+    const g = lanes.getContext("2d");
+    g.fillStyle = "#1a1c21";
+    g.fillRect(0, 0, w, 58);
+    if (!fr.length) return;
+    const cw = (w - LABEL_W) / fr.length, rh = (58 - 6) / 2;
+    ["footL", "footR"].forEach((b, li) => {
+      g.fillStyle = "#8a8496";
+      g.font = "12px sans-serif";
+      g.fillText("LR"[li], 4, 3 + rh * li + rh * 0.7);
+      fr.forEach((r, i) => { g.fillStyle = FEET_COLORS[(r[b] || {}).state || "air"] || "#888"; g.fillRect(LABEL_W + i * cw, 3 + rh * li + 1, Math.max(1, cw - 0.5), rh - 2); });
+    });
+    const last = fr[fr.length - 1].f;
+    const x = LABEL_W + (app.frame / Math.max(1, last)) * (w - LABEL_W - cw) + cw * 0.5;
+    g.strokeStyle = "rgba(255,255,255,0.9)";
+    g.lineWidth = 2;
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 58); g.stroke();
+  }
+  const pick = (e) => {
+    const fr = report.frames || [];
+    if (!fr.length) return;
+    const i = Math.max(0, Math.min(fr.length - 1, Math.floor((e.offsetX - LABEL_W) / ((lanes.clientWidth - LABEL_W) / fr.length))));
+    app.setFrame(fr[i].f);
+  };
+  lanes.onpointerdown = (e) => { lanes.setPointerCapture(e.pointerId); pick(e); };
+  lanes.onpointermove = (e) => { if (e.buttons & 1) pick(e); };
+  function showNow() {
+    const fr = report.frames || [];
+    if (!fr.length) { now.textContent = ""; return; }
+    const r = fr[Math.max(0, Math.min(fr.length - 1, Math.round(app.frame)))];
+    now.textContent = `f${r.f}  ` + ["footL", "footR"].map((b) => { const d = r[b] || {}; return `${b}  ${FEET_SAY[d.state] || ""}  (${d.low_cm >= 0 ? "+" : ""}${Number(d.low_cm || 0).toFixed(1)} cm, ${Math.round(d.tilt || 0)} deg)`; }).join("   |   ");
+  }
+  function tick() {
+    if (!dirty || !el.isConnected || !el.offsetParent || !app.stage || !app.stage.probe) return;
+    dirty = false;
+    report = app.feetReport(1);
+    planted.querySelector("input").checked = app.doc.plant;
+    soles.textContent = "This model: " + Object.entries(report.soles || {}).map(([b, s]) => `${b} sole ${Math.round(s.tilt0)} deg off level at rest, ankle ${s.ankle_cm.toFixed(1)} cm over it`).join("; ");
+    counts.textContent = "Foot-frames: " + ["flat", "pivot", "limit", "sink", "air"].filter((k) => report.counts[k]).map((k) => `${k} ${report.counts[k]}`).join(", ");
+    showNow();
+    draw();
+  }
+  app.on((w) => {
+    if (["doc", "clip", "fighter", "saved", "layer"].includes(w)) dirty = true;
+    if (w === "frame" || w === "play") { showNow(); draw(); }
+  });
+  // measured only while the panel shows (the whole clip is posed once per change)
+  setInterval(tick, 250);
+  return el;
+}
+
+// ==================================================================== MERGE
+export function Merge(app) {
+  const el = body();
+  const find = h("input", { placeholder: "clip to put on top (type to search)", oninput: () => search(), style: "flex:1" });
+  const found = list((i, t) => (find.value = t), (i, t) => add(t));
+  found.el.style.minHeight = "84px";
+  const baseLbl = h("div", { class: "big", style: "color:#ffc93c" });
+  const rows = h("div");
+  const lenLbl = hint("");
+  const name = h("input", { placeholder: "name of the merged clip", style: "width:220px" });
+  const rebuild = button("REBUILD THE SETUP", async () => {
+    if (app.history.dirty() && !(await window.host.confirm(`Rebuild the merge behind ${app.doc.name}? Changes to it are lost.`))) return;
+    app.mergeRebuild();
+  }, "This clip was merged: open its base with the clips on top again");
+  el.append(heading("Merge"), hint("One animation from several. The open clip is the BASE: it gives the body. Each clip ON TOP gives only the parts you light up (the arms of a cheer over a run, a clap over a walk), from its start frame, blending in and out. Play to see it. BAKE makes one new clip; the base stays as it is."),
+    baseLbl, row(find, button("PUT ON TOP", () => add(found.text() || find.value.trim()), "From the current frame, the arms and hands first; light up other parts on its row")), found.el,
+    h("hr"), rows, h("hr"), lenLbl,
+    row(name, button("BAKE INTO ONE CLIP", () => app.mergeBake(name.value.trim() || app.doc.name + "_merged"), "One new clip with everything above in it (opens unsaved; the base is not touched)"), rebuild));
+  let all = [];
+  async function search() {
+    if (!all.length) all = await window.host.listClips();
+    const q = find.value.trim();
+    found.set(all.filter((c) => !q || c.includes(q)).slice(0, 80));
+  }
+  function add(clip) {
+    if (!clip) return app.say("Pick a clip to put on top.", "warn");
+    app.mergeAdd(clip);
+  }
+  let ids = "";
+  function refresh() {
+    const ml = M.mergeLayers(app.doc);
+    baseLbl.textContent = `Base: ${app.doc.name}  (${app.doc.frames} frames${app.doc.loop ? ", loops: repeats under longer clips" : ""})`;
+    lenLbl.textContent = ml.length ? `The merged clip runs ${M.length(app.doc)} frames.` : "Nothing on top yet.";
+    rebuild.style.display = app.doc.extra.merge ? "" : "none";
+    if (!name.value || name.value.endsWith("_merged")) name.value = app.doc.name + "_merged";
+    const now = ml.map((l) => l.id).join(",");
+    if (now === ids) return;   // same rows: the widgets already show the values (no rebuild while you type)
+    ids = now;
+    rows.innerHTML = "";
+    for (const l of ml) rows.append(mergeRow(l));
+  }
+  function mergeRow(l) {
+    const id = l.id;
+    const set = (p) => app.mergeSet(id, p);
+    const chips = M.PARTS.map((p) => {
+      const on = (l.parts || []).includes(p);
+      const c = button(p.toUpperCase(), () => {
+        const cur = [...(app.doc.layerById(id)?.parts || [])];
+        const lit = !c.classList.contains("on");
+        c.classList.toggle("on", lit);
+        set({ parts: lit ? [...cur.filter((x) => x !== p), p] : cur.filter((x) => x !== p) });
+      }, "This part comes from this clip", on ? "on" : "");
+      return c;
+    });
+    return h("div", { class: "mrow" }, row(h("span", { class: "big" }, l.clip), ...chips),
+      row(label("start f"), num(l.start || 0, (v) => set({ start: v | 0 }), { min: 0 }), button("NOW", () => set({ start: Math.round(app.frame) }), "Start at the current frame"),
+        label("blend in"), num(l.fade_in || 0, (v) => set({ blend_in: v | 0 }), { min: 0, max: 240 }), label("out"), num(l.fade_out || 0, (v) => set({ blend_out: v | 0 }), { min: 0, max: 240 }),
+        label("weight"), num(l.weight ?? 1, (v) => set({ weight: v }), { min: 0, max: 1, step: 0.05 }),
+        check("loop it", !!l.cycle, (v) => set({ cycle: v }), "Repeat this clip to the end"), check("mute", !!l.mute, (v) => set({ mute: v })),
+        button("REMOVE", () => app.removeLayer(id))), h("hr"));
+  }
+  app.on((w) => { if (["doc", "clip", "layer"].includes(w)) refresh(); if (w === "clips" || w === "saved") { all = []; search(); } });
+  search();
+  refresh();
+  return el;
+}
+
 // ==================================================================== AGENTS
 export function Agents(app) {
   const el = h("div", { class: "pbody split" });
@@ -465,12 +705,12 @@ export function Render(app) {
   const a = num(0, () => {}, { min: 0 }), b = num(app.doc.frames, () => {}, { min: 0 });
   const last = hint("");
   const wh = () => SIZES[Number(res.value)];
-  el.append(heading("Render"), hint("Pictures of your animation at HD or 4K, saved to D:/Cache/fight_studio_renders. Stills use the view you clicked last."), res,
+  el.append(heading("Render"), hint(`Pictures of your animation at HD or 4K, saved to ${app.info.dirs.renders}. Stills use the view you clicked last.`), res,
     row(button("STILL OF THE VIEW", async () => (last.textContent = await app.ui.picture("view", wh()[1], wh()[2]))), label("sheet columns"), cols,
       button("REVIEW SHEET (4 ANGLES)", async () => (last.textContent = await app.ui.picture("sheet", wh()[1], wh()[2], Number(cols.value))))),
     row(label("frames"), a, label("to"), b, button("PNG SEQUENCE", async () => {
       const was = app.frame;
-      const dir = `D:/Cache/fight_studio_renders/${app.fighter}_${app.doc.name}_seq_${wh()[1]}x${wh()[2]}`;
+      const dir = `${app.info.dirs.renders}/${app.fighter}_${app.doc.name}_seq_${wh()[1]}x${wh()[2]}`;
       for (let f = Number(a.value); f <= Number(b.value); f++) {
         app.frame = f; app.pending = null; app.applyNow();
         await app.ui.picture("view", wh()[1], wh()[2], 8, `${dir}/f${String(f).padStart(4, "0")}.png`);
@@ -478,7 +718,7 @@ export function Render(app) {
       app.frame = was; app.applyNow();
       last.textContent = dir;
       app.say("Rendered frames to " + dir, "ok");
-    })), row(button("OPEN THE FOLDER", () => window.host.openPath("D:/Cache/fight_studio_renders"))), last);
+    })), row(button("OPEN THE FOLDER", () => window.host.openPath(app.info.dirs.renders))), last);
   app.on((w) => { if (w === "clip") b.value = app.doc.frames; });
   return el;
 }

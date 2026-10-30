@@ -1,5 +1,5 @@
 /* Fight Studio Desktop: premium street editorial x cinematic tech. Dark plum, orange / gold accents. */
-@font-face { font-family: "Oswald"; src: url("../../../Games/BSP-Universe/ui/fonts/oswald600.woff2") format("woff2"); font-weight: 600; }
+@font-face { font-family: "Oswald"; src: url("fonts/oswald600.woff2") format("woff2"); font-weight: 600; }
 :root {
   --bg0: #0d0b0f; --bg1: #16131a; --bg2: #1f1a24; --bg3: #2a2430; --line: #3a3342; --text: #f4efe6; --muted: #9a91a6;
   --accent: #ff7a1a; --gold: #ffc93c; --left: #4fd1ff; --right: #ff5d8f; --ok: #5ce08a; --purple: #a77bff; --red: #ff4d4d;

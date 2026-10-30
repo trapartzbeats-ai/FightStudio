@@ -5,6 +5,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
 import { Body } from "./core/body.js";
 import { v3 } from "./core/clip.js";
+import * as G from "./core/grip.js";
 
 export const SKY = 0x2a2430;
 
@@ -145,31 +146,44 @@ export class Stage {
 
   placeProps(app) {
     const list = app.doc.props;
-    const sig = list.map((p) => `${p.shape}|${p.color}`).join(";");
+    const sig = list.map((p) => `${p.shape}|${p.color}|${JSON.stringify(p.size || "")}`).join(";");
     if (sig !== this._propSig) {
       this._propSig = sig;
       this.props.clear();
       for (const p of list) {
-        const mesh = new THREE.Mesh(propGeometry(p.shape), new THREE.MeshStandardMaterial({ color: p.color || "#c8c0d0", roughness: 0.6 }));
+        const geo = G.PROXY_SIZES[p.shape] ? G.proxyGeometry(p.shape, v3(p.size || G.PROXY_SIZES[p.shape])) : propGeometry(p.shape);
+        const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: p.color || "#c8c0d0", roughness: 0.6 }));
         mesh.castShadow = true;
         this.props.add(mesh);
       }
     }
     list.forEach((p, i) => {
       const mesh = this.props.children[i];
+      if (mesh && p.grip) {   // in the hand by grip kind: cylinder_R, sphere_L, block_R ... (grip.js, the frame the game uses)
+        const [kind, side] = String(p.grip).split("_");
+        const size = v3(p.size || G.PROXY_SIZES[p.shape] || [0.1, 0.1, 0.1]);
+        const r = v3(p.rot).map((x) => (x * Math.PI) / 180);
+        const local = new THREE.Matrix4().compose(new THREE.Vector3(...v3(p.offset)), new THREE.Quaternion().setFromEuler(new THREE.Euler(r[0], r[1], r[2], "YXZ")), new THREE.Vector3(1, 1, 1));
+        G.frame(app.stage.body, side || "R", kind, size).multiply(local).decompose(mesh.position, mesh.quaternion, mesh.scale);
+        mesh.scale.multiplyScalar(Number(p.scale ?? 1));
+        mesh.visible = p.visible !== false;
+        return;
+      }
       const sp = app.sockSpecs[p.socket] || { bone: p.bone || "handR" };
       if (!mesh || !app.stage.body.has(sp.bone)) { if (mesh) mesh.visible = false; return; }
       mesh.visible = p.visible !== false;
       const q = app.stage.body.worldQuat(sp.bone);
       mesh.position.copy(app.socketWorld(p.socket)).add(new THREE.Vector3(...v3(p.offset)).applyQuaternion(q));
       const r = v3(p.rot).map((x) => (x * Math.PI) / 180);
-      mesh.quaternion.copy(q).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(r[0], r[1], r[2])));
+      mesh.quaternion.copy(q).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(r[0], r[1], r[2], "YXZ")));   // Godot's Basis.from_euler order
       mesh.scale.setScalar(Number(p.scale ?? 1));
     });
   }
 }
 
-export const PROP_SHAPES = ["box", "bat", "blade", "ball", "can", "phone"];
+// grey proxies with a size (size: [x, y, z] m) are for placement work; grip: "cylinder_R" etc. puts a prop in the hand by the
+// game's grip frame instead of on a socket
+export const PROP_SHAPES = ["box", "bat", "blade", "ball", "can", "phone", "block", "cylinder", "sphere"];
 
 function propGeometry(shape) {
   switch (shape) {
