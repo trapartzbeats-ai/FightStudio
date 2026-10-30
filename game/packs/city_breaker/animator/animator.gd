@@ -608,7 +608,7 @@ func drag_ik(bone: String, target_world: Vector3) -> void:
 		for b in (FSARig.LIMBS[limb] as Array):
 			ids.append(sk.find_bone(str(b)))
 		var keep: Variant = sk.get_bone_global_pose(ids[2]).basis.orthonormalized() if keep_end else null
-		FSAEval.solve_two_bone(sk, ids[0], ids[1], ids[2], sk.global_transform.affine_inverse() * target_world, FSAEval.auto_pole(sk, limb, ids[0], ids[1], ids[2]), keep, 1.0)
+		FSAEval.solve_two_bone(sk, ids[0], ids[1], ids[2], sk.global_transform.affine_inverse() * target_world, Vector3.INF, keep, 1.0)
 		for i in ids:
 			touched[i] = true
 	elif bone == "hips":

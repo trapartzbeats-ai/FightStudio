@@ -259,6 +259,16 @@ func _api() -> void:
 	ok(((r["result"] as Dictionary)["bones"] as Array).size() == app.bones.size(), "api rig lists every bone")
 	r = await api.call_method("ik_pose", {"frame": 5, "bone": "footR", "target": [-0.12, 0.25, 0.3]})
 	ok(bool(r.get("ok", false)) and float((r["result"] as Dictionary)["miss_m"]) < 0.03, "api ik_pose reaches (%s)" % str(r))
+	# a foot pulled forward and up, and a hand out front: the joint limits never make the IK miss (knees / elbows bend on
+	# their hinge only, so no twist piles up in the thigh / upper arm for the limits to clamp)
+	var sh := app.joint_world("armR")
+	var reach := sh.distance_to(app.joint_world("elbowR")) + app.joint_world("elbowR").distance_to(app.joint_world("handR"))
+	var hand := sh + Vector3(0.1, -0.35, 0.85).normalized() * reach * 0.75   # in front of the shoulder, inside the arm's reach
+	for t in [["footR", [0.12, 0.25, 0.3], "kneeR"], ["footL", [-0.2, 0.45, 0.35], "kneeL"], ["handR", [hand.x, hand.y, hand.z], "elbowR"]]:
+		r = await api.call_method("ik_pose", {"frame": 5, "bone": t[0], "target": t[1]})
+		var hinge: Vector3 = app.editable_pose().get(str(t[2]), Vector3.ZERO)
+		ok(bool(r.get("ok", false)) and float((r["result"] as Dictionary)["miss_m"]) < 0.01 and absf(hinge.y) < 1e-3 and absf(hinge.z) < 1e-3,
+			"ik reaches %s %s on the %s hinge (%s, %s deg)" % [t[0], str(t[1]), t[2], str(r.get("result", r)), str(hinge * 57.2958)])
 	r = await api.call_method("checks", {})
 	ok(bool(r.get("ok", false)), "api checks")
 	r = await api.call_method("nope", {})

@@ -310,9 +310,15 @@ static func _arc(u: Vector3, v: Vector3) -> Basis:
 	return Basis(ax.normalized(), acos(d))
 
 
-## two-bone IK in skeleton space. pole = a point the knee / elbow points toward. end_basis: hold the end bone's global
-## orientation (feet stay flat, a pinned hand keeps its angle); null = the end bone turns with the lower bone.
+## two-bone IK in skeleton space. pole = a point the knee / elbow points toward (Vector3.INF: none given; a hinge keeps the
+## plane it already bends in, any other limb uses auto_pole). end_basis: hold the end bone's global orientation (feet stay
+## flat, a pinned hand keeps its angle); null = the end bone turns with the lower bone.
 static func solve_two_bone(skel: Skeleton3D, ia: int, ib: int, ic: int, target: Vector3, pole: Vector3, end_basis: Variant, w: float) -> void:
+	if is_hinge(skel.get_bone_name(ib)):
+		_solve_hinge(skel, ia, ib, ic, target, pole, end_basis, w)
+		return
+	if not pole.is_finite():
+		pole = auto_pole(skel, skel.get_bone_name(ia), ia, ib, ic)
 	var ga := skel.get_bone_global_pose(ia)
 	var gb := skel.get_bone_global_pose(ib)
 	var gc := skel.get_bone_global_pose(ic)
@@ -363,6 +369,79 @@ static func solve_two_bone(skel: Skeleton3D, ia: int, ib: int, ic: int, target: 
 		_set_global_basis(skel, ic, end_basis as Basis, w)
 
 
+## joints that bend on one axis only (data/animator_rig.json "hinge"): knees and elbows
+static func is_hinge(b: String) -> bool:
+	return b in (FSARig.data().get("hinge", ["elbowL", "elbowR", "kneeL", "kneeR"]) as Array)
+
+
+## two-bone IK for a hinge (knee, elbow): the middle joint only bends on its X, inside its limits (a knee never bends forward
+## and never twists), the upper bone aims the limb at the target along the shortest arc (the bend keeps the plane the limb
+## already bends in), then, when a pole is given, turns about that line so the joint points at it. The joint limits never
+## fight the result: the free solve put twist into the thigh that the limits then clamped, and the foot missed.
+static func _solve_hinge(skel: Skeleton3D, ia: int, ib: int, ic: int, target: Vector3, pole: Vector3, end_basis: Variant, w: float) -> void:
+	var before := [skel.get_bone_pose_rotation(ia), skel.get_bone_pose_rotation(ib), skel.get_bone_pose_rotation(ic)]
+	var ga := skel.get_bone_global_pose(ia)
+	var pa := ga.origin
+	var want := pa.distance_to(target)
+	if want < 1e-5:
+		return
+	var bname := skel.get_bone_name(ib)
+	var rest_b := skel.get_bone_rest(ib).basis.orthonormalized()
+	var e := FSARig.clamp_limits(bname, (rest_b.inverse() * Basis(skel.get_bone_pose_rotation(ib))).get_euler(EULER_ORDER_ZYX))
+	var lim: Dictionary = FSARig.limits().get(bname, {})
+	var r: Array = lim.get("x", [-PI, PI])
+	var lo := float(r[0])
+	var hi := float(r[1])
+	# where the end joint lands for a bend x (the upper bone as it is now): pb + Gb(x) * c's local offset
+	var pb := pa + ga.basis * skel.get_bone_pose_position(ib)
+	var sb := skel.get_bone_pose_scale(ib)
+	var oc := skel.get_bone_pose_position(ic)
+	var miss := func(x: float) -> float:
+		var gb := ga.basis * (rest_b * Basis.from_euler(Vector3(x, e.y, e.z), EULER_ORDER_ZYX)).scaled(sb)
+		return absf(pa.distance_to(pb + gb * oc) - want)
+	var best := e.x
+	var bm := INF
+	var n := 48
+	var step := (hi - lo) / float(n)
+	for i in n + 1:
+		var x := lo + step * i
+		var m: float = miss.call(x)
+		if m < bm:
+			bm = m
+			best = x
+	var a := maxf(lo, best - step)
+	var b := minf(hi, best + step)
+	for it in 30:
+		var m1 := a + (b - a) / 3.0
+		var m2 := b - (b - a) / 3.0
+		if float(miss.call(m1)) < float(miss.call(m2)):
+			b = m2
+		else:
+			a = m1
+	skel.set_bone_pose_rotation(ib, (rest_b * Basis.from_euler(Vector3((a + b) * 0.5, e.y, e.z), EULER_ORDER_ZYX)).get_rotation_quaternion())
+	skel.force_update_all_bone_transforms()
+	var pc := skel.get_bone_global_pose(ic).origin
+	_set_global_basis(skel, ia, _arc(pc - pa, target - pa) * ga.basis.orthonormalized(), 1.0)
+	skel.force_update_all_bone_transforms()
+	if pole.is_finite():
+		var axis := (target - pa).normalized()
+		var k := skel.get_bone_global_pose(ib).origin - pa
+		var pv := pole - pa
+		k -= axis * k.dot(axis)
+		pv -= axis * pv.dot(axis)
+		if k.length() > 1e-5 and pv.length() > 1e-5:
+			var ang := atan2(axis.dot(k.cross(pv)), k.dot(pv))
+			_set_global_basis(skel, ia, Basis(axis, ang) * skel.get_bone_global_pose(ia).basis.orthonormalized(), 1.0)
+			skel.force_update_all_bone_transforms()
+	if end_basis is Basis:
+		_set_global_basis(skel, ic, end_basis as Basis, 1.0)
+	if w < 1.0:
+		var ids := [ia, ib, ic]
+		for i in 3:
+			skel.set_bone_pose_rotation(ids[i], (before[i] as Quaternion).slerp(skel.get_bone_pose_rotation(ids[i]), clampf(w, 0.0, 1.0)))
+	skel.force_update_all_bone_transforms()
+
+
 ## the pole for a limb: the current bend direction when the joint is bent, else forward for knees / back for elbows
 static func auto_pole(skel: Skeleton3D, limb: String, ia: int, ib: int, ic: int) -> Vector3:
 	var pa := skel.get_bone_global_pose(ia).origin
@@ -397,10 +476,8 @@ static func _ik(c: Dictionary, f: float, skel: Skeleton3D, w: float, touched: Di
 	if ids.is_empty():
 		return
 	var t := _w2s(skel, target_point(c.get("target", {}) as Dictionary, f, skel))
-	var pole: Vector3
-	if (c.get("pole", {}) as Dictionary).is_empty():
-		pole = auto_pole(skel, limb, ids[0], ids[1], ids[2])
-	else:
+	var pole := Vector3.INF   # none given: a hinge keeps its own bend plane
+	if not (c.get("pole", {}) as Dictionary).is_empty():
 		pole = _w2s(skel, target_point(c["pole"] as Dictionary, f, skel))
 	var keep: Variant = null
 	if bool(c.get("keep_end", true)):
@@ -441,7 +518,7 @@ static func _pin(c: Dictionary, skel: Skeleton3D, w: float, touched: Dictionary,
 		if ids.is_empty():
 			return
 		var keep: Variant = g.basis.orthonormalized() if what == "both" else skel.get_bone_global_pose(ids[2]).basis.orthonormalized()
-		solve_two_bone(skel, ids[0], ids[1], ids[2], g.origin, auto_pole(skel, limb, ids[0], ids[1], ids[2]), keep, w)
+		solve_two_bone(skel, ids[0], ids[1], ids[2], g.origin, Vector3.INF, keep, w)
 		for i in ids:
 			touched[i] = true
 		return
