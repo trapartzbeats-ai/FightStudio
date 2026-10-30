@@ -19,7 +19,7 @@ cd D:\Projects\FightStudioDesktop
 npm install
 npm start                          # or: node_modules\electron\dist\electron.exe .
 npm start -- --fighter=carter --clip=a_jab1
-npm run selftest                   # 91 checks, prints to out/desktop.log
+npm run selftest                   # 116 checks, prints to out/desktop.log
 npm run dist                       # builds dist/FightStudioDesktop-Setup-<version>.exe
 ```
 
@@ -45,13 +45,18 @@ Options: `--fighter=` `--clip=` `--project=<Godot project>` `--api-port=47651` `
 - **Merge**: one animation from several. The open clip is the base; each clip on top gives only the parts you light up
   (Head, Spine, Arm L / R, Hands, Hips, Legs, Tail) from a start frame, blending in and out. BAKE makes one new clip and
   keeps the recipe, so REBUILD THE SETUP brings it back.
+- **Fill**: the frames between two keys, made for you. SHAPE makes the move by the rules of good motion (timing smooth /
+  even / strike / settle, Flow through the keys, Overlap, Anticipate, Overshoot); LIBRARY finds how your own clips make the
+  same change (mirrored too) and bends it onto your two keys. Joints stay in their limits, planted feet stay put or step,
+  keyed spins stay spins. The made frames are plain breakdown keys; once filled the knobs change it live; REMOVE gives the
+  keys back. The same as the Godot Animator's Fill (its `FILL_PLAN.md` has the research and design).
 - **Feet**: a planted clip stands each foot on its real sole (read off the model's mesh, the same as the game's
   `CBFeet.ground`): feet levelled, legs reached down with the knee's own bend, toes / heel pivots kept, nothing into the
   floor. The Feet panel shows per-foot lanes (flat / pivot / limit / sink / air) across the clip.
 - **Motion import**: File > Import motion takes a Mixamo FBX (or a GLB / glTF with a Mixamo-style skeleton) onto our rig as
   a new clip: lined up from T-pose to our A-pose, in place, inside the joint limits, loop / planted detected.
 - **Panels**: Clips, Poses (mirror, flip, copy / paste, pose library), Sockets (+ props, and grey grip proxies that sit in the
-  hand by the game's grip frame), Properties, Controls (one slider, many bones; add your own), Adjust, Layers (keys / clip
+  hand by the game's grip frame), Properties, Controls (one slider, many bones; add your own), Adjust, Fill, Layers (keys / clip
   layers, add / add_delta / override, masks, fades), Constraints (IK, freeze, aim, limit, copy, floor / plant), Outliner,
   Checks, Dope Sheet, Graph, Blend Lab (transitions, mixes), Merge, Feet, Agents, History, Render (HD / Full HD / QHD / 4K
   stills, the review sheet, PNG sequences).
@@ -67,7 +72,7 @@ Options: `--fighter=` `--clip=` `--project=<Godot project>` `--api-port=47651` `
 ## Agents
 
 The app serves the agent API on `http://127.0.0.1:47651/rpc` (localhost only; `GET /methods`), the same methods as the Godot
-Animator on :47650, including merge, adjust, feet, import_motion and the prop / grip calls. The MCP server ships with the game
+Animator on :47650, including merge, adjust, feet, fill, import_motion and the prop / grip calls. The MCP server ships with the game
 project (`game/packs/city_breaker/animator/mcp/fight_studio_mcp.py`), finds whichever app is running (or set
 `FIGHT_STUDIO_URL`), and `studio_launch(app="electron")` starts this one. Register it once:
 
@@ -81,7 +86,7 @@ The Agents panel shows the MCP config with the server's path in the project you 
 
 `main.js` (window, file access limited to the game's clip / pose / data folders, the project folder setting, pop-out windows,
 the HTTP API), `preload.js`, `src/core/` (clip = the game's interpolation, doc, rig, evalc = layers + constraints + IK, body,
-history, adjust, merge, feet, grip, motion_import), `src/app.js` (every edit), `src/stage.js` (3D world), `src/views.js`
+history, adjust, merge, feet, fill, grip, motion_import), `src/app.js` (every edit), `src/stage.js` (3D world), `src/views.js`
 (canvas), `src/timeline.js` (dope sheet, graph), `src/panels.js`, `src/shell.js` (menus, bars, docks, windows), `src/api.js`,
 `tests/selftest.js`, `build/` (the installer icon).
 

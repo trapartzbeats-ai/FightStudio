@@ -1,7 +1,7 @@
 // The page's only door to the computer: the game's clip / pose / data folders, models, renders, and the agent API bridge.
 const { contextBridge, ipcRenderer } = require("electron");
 
-const names = ["info", "listClips", "loadClip", "clipExists", "saveClip", "trashClip", "listPoses", "loadPose", "savePose", "loadData",
+const names = ["info", "listClips", "loadClip", "clipLibrary", "clipExists", "saveClip", "trashClip", "listPoses", "loadPose", "savePose", "loadData",
   "saveData", "fighters", "modelUrl", "pickMotion", "motionUrl", "writePng", "openPath", "captureWindow", "bakeAnimato", "openGodotAnimator", "confirm", "setTitle", "changeProject", "quit", "log"];
 const host = {};
 for (const n of names) host[n] = (...a) => ipcRenderer.invoke("fs:" + n, ...a);

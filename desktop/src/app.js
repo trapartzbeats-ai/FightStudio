@@ -10,6 +10,8 @@ import * as A from "./core/adjust.js";
 import * as M from "./core/merge.js";
 import * as F from "./core/feet.js";
 import * as MI from "./core/motion_import.js";
+import * as FG from "./core/fingers.js";
+import * as FL from "./core/fill.js";
 
 export class App extends EventTarget {
   constructor() {
@@ -38,6 +40,7 @@ export class App extends EventTarget {
     this.info = await window.host.info();
     E.setClipLoader((n) => window.host.loadClip(n));
     await R.loadRigData();
+    await FG.loadFingers();
     this.fighters = await window.host.fighters();
     const args = this.info.args;
     const arg = (n, d) => (args.find((a) => a.startsWith(`--${n}=`)) || `--${n}=${d}`).split("=").slice(1).join("=");
@@ -160,10 +163,11 @@ export class App extends EventTarget {
     const total = boneRot(base, bone);
     const pq = body.parentWorldQuat(bone);
     const restQ = body.rest.get(bone).q;
-    const lOld = restQ.clone().multiply(rotQuat(total));
+    const lOld = restQ.clone().multiply(FG.mapQuat(body.fmap, bone, total));
     const rw = new THREE.Quaternion().setFromAxisAngle(axisWorld.clone().normalize(), angle);
     const lNew = pq.clone().invert().multiply(rw).multiply(pq).multiply(lOld);
-    const eNew = E.nearestEuler(eulerOf(restQ.clone().invert().multiply(lNew)), total);
+    let eNew = E.nearestEuler(eulerOf(FG.unmapQuat(body.fmap, bone, restQ.clone().invert().multiply(lNew))), total);
+    eNew = R.clampFingerTotal(bone, eNew);   // a finger's range is on its total turn (own + the joint it follows)
     pose[bone] = this.doc.guard(bone, own, sub3(eNew, sub3(total, own)));
     this._mirrorInto(pose, bone);
     return pose;
@@ -705,6 +709,60 @@ export class App extends EventTarget {
     return true;
   }
 
+  // Fill (core/fill.js): the span to fill. opts from / to (frames), else the keys around the current frame; [] when there is none
+  fillSpan(opts = {}) {
+    if ("from" in opts && "to" in opts) {
+      const a = Math.trunc(Number(opts.from)), b = Math.trunc(Number(opts.to));
+      return a >= 0 && b <= this.doc.frames && b - a >= 2 ? [a, b] : [];
+    }
+    return FL.spanAround(this.doc, this.frame);
+  }
+
+  // make the frames between two keys (FL.DEFAULTS for the settings). Filling the same span again replaces its fill and keeps
+  // the settings you did not pass, so turning a knob refills live (one undo step while you drag). Returns {id, from, to, keys,
+  // engine, match, feet, settings} or {error}
+  async fillApply(opts = {}, who = "you") {
+    const sp = this.fillSpan(opts);
+    if (!sp.length) { this.say("Fill needs a key before and after this frame, at least 2 frames apart (or from / to).", "warn"); return { error: "no span" }; }
+    const [a, b] = sp;
+    if (FL.lockedInside(this.doc, a, b)) { this.say(`A locked key sits between f${a} and f${b}: unlock it to fill there.`, "warn"); return { error: "locked key" }; }
+    const old = FL.atSpan(this.doc, a, b);
+    const want = { ...(old ? old.settings : {}) };
+    for (const k in opts) want[k] = opts[k];
+    const s = FL.settings(want);
+    if (s.engine === "library") await this.fillLibrary();
+    const made = FL.make(this.doc, this.bones, this.stage.probe, a, b, s);
+    if (made.error) { this.say(`Fill: ${made.error}.`, "warn"); return { error: made.error }; }
+    const n = Object.keys(made.poses).length;
+    if (!n) { this.say(`Fill: f${a} to f${b} has no frame in between at this key step.`, "warn"); return { error: "nothing between" }; }
+    const id = old ? old.id : FL.nextId(this.doc);
+    this.mutate(`Fill f${a}-f${b}`, () => FL.write(this.doc, this.bones, a, b, made, s, id), who);
+    this.say(`Filled ${FL.describe(FL.find(this.doc, id))} (${n} keys).`, who !== "you" ? "agent" : "ok");
+    return { id, from: a, to: b, keys: n, engine: s.engine, match: made.match, feet: made.feet, settings: s };
+  }
+
+  // the clip library for Fill, read once (again when a clip file changed)
+  async fillLibrary(force = false) {
+    return FL.libraryIndex((have) => window.host.clipLibrary(have), force);
+  }
+
+  // the library stretches that best join the two poses (FL.matches); opts from / to, n
+  async fillMatches(opts = {}) {
+    const sp = this.fillSpan(opts);
+    if (!sp.length) return [];
+    await this.fillLibrary();
+    return FL.matches(this.doc, this.bones, sp[0], sp[1], Number(opts.n ?? 5));
+  }
+
+  // take a fill out ("" = every fill); returns how many keys went
+  fillRemove(id = "", who = "you") {
+    const ids = id ? [id] : this.doc.fills.map((fl) => fl.id);
+    if (!ids.length || (id && !FL.find(this.doc, id))) return 0;
+    const gone = this.mutate(ids.length === 1 ? "Remove fill" : "Remove fills", () => ids.reduce((n, i) => n + FL.remove(this.doc, i), 0), who);
+    this.say(`Fill removed: ${gone} keys went, the keys around it are as they were.`, who !== "you" ? "agent" : "ok");
+    return gone;
+  }
+
   async makeTransitionClip(clipB, at, blend, name, who = "you") {
     const cb = await E.preloadClip(clipB);
     if (!cb) { this.say(`No clip named ${clipB}.`, "warn"); return false; }
@@ -818,6 +876,7 @@ export class App extends EventTarget {
   async setFighter(k, first = false) {
     const url = await window.host.modelUrl(k);
     if (!url) { this.say(`No model for ${k}.`, "warn"); return false; }
+    FG.useFighter(k);
     await this.stage.loadFighter(url, k);
     this.fighter = k;
     this.bones = this.stage.body.names;
@@ -914,6 +973,9 @@ export class App extends EventTarget {
   runChecks() {
     const out = [];
     for (const k of this.doc.keys) {
+      const kp = {};
+      for (const b in k.rot || {}) kp[b] = v3(k.rot[b]);
+      for (const b of this.bones) if (R.fingerBreaks(b, boneRot(kp, b))) out.push({ level: "warn", f: k.f, text: `${b} bends past a finger's natural range at f${k.f}` });
       for (const b in k.rot || {}) {
         const e = v3(k.rot[b]);
         if (b.startsWith("knee") && e[0] < -0.01) out.push({ level: "error", f: k.f, text: `${b} bends FORWARD at f${k.f} (${Math.round(e[0] * DEG)}°): a knee never does` });

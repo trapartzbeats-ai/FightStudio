@@ -5,6 +5,7 @@
 const { app, BrowserWindow, ipcMain, shell, screen, dialog } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 const http = require("http");
 const { spawn } = require("child_process");
 const { pathToFileURL } = require("url");
@@ -94,6 +95,20 @@ const handlers = {
   info: () => ({ project: PROJECT, dirs: DIRS, args: ARGS, apiPort: API_PORT, version: app.getVersion() }),
   listClips: () => (fs.existsSync(DIRS.clips) ? fs.readdirSync(DIRS.clips).filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5)).sort() : []),
   loadClip: (name) => (safeName(name) ? readJson(path.join(DIRS.clips, name + ".json")) : null),
+  // every clip for Fill's library (core/fill.js): a signature of the names + file times, and the clips when it changed
+  clipLibrary: (have) => {
+    if (!fs.existsSync(DIRS.clips)) return { sig: "", clips: {} };
+    const files = fs.readdirSync(DIRS.clips).filter((f) => f.endsWith(".json")).sort();
+    const stamp = files.map((f) => f + ":" + fs.statSync(path.join(DIRS.clips, f)).mtimeMs).join(",");
+    const sig = crypto.createHash("md5").update(stamp).digest("hex");
+    if (have && have === sig) return { sig };
+    const clips = {};
+    for (const f of files) {
+      const c = readJson(path.join(DIRS.clips, f));
+      if (c) clips[f.slice(0, -5)] = c;
+    }
+    return { sig, clips };
+  },
   clipExists: (name) => safeName(name) && fs.existsSync(path.join(DIRS.clips, name + ".json")),
   saveClip: (clip) => {
     if (!clip || !safeName(clip.name)) return { ok: false, error: "bad clip name" };

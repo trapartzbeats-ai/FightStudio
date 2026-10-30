@@ -187,6 +187,7 @@ async function boot() {
   dock("Properties", P.Props(app), "right_top");
   dock("Controls", P.Controls(app), "right_top");
   dock("Adjust", P.Adjust(app), "right_top");
+  dock("Fill", P.Fill(app), "right_top");
   dock("Layers", P.Layers(app), "right_top");
   dock("Constraints", P.Constraints(app), "right_top");
   dock("Outliner", P.Outliner(app), "right_bottom");

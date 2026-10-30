@@ -165,6 +165,7 @@ func _on_close() -> void:
 func _bind_fighter() -> void:
 	skel = stage.skel
 	bones = stage.bones
+	FSARig.use_fighter(fighter)
 	CBClipLib.apply_pose(skel, {})
 	skel.force_update_all_bone_transforms()
 	var lo := INF
@@ -238,6 +239,7 @@ func _build_ui(layout: String) -> void:
 	dock.add_panel("Properties", FSAPanels.Props.new().setup(self), "right_top")
 	dock.add_panel("Controls", FSAPanels.Controls.new().setup(self), "right_top")
 	dock.add_panel("Adjust", FSAPanels.Adjust.new().setup(self), "right_top")
+	dock.add_panel("Fill", FSAPanels.Fill.new().setup(self), "right_top")
 	dock.add_panel("Layers", FSAPanels.Layers.new().setup(self), "right_top")
 	dock.add_panel("Constraints", FSAPanels.Constraints.new().setup(self), "right_top")
 	dock.add_panel("Outliner", FSAPanels.Outliner.new().setup(self), "right_bottom")
@@ -554,9 +556,12 @@ func rotate_in_pose(base: Dictionary, bone: String, axis_world: Vector3, angle: 
 	var own: Vector3 = base.get(bone, Vector3.ZERO)
 	var total := CBClipLib.bone_rot(base, bone)
 	var axis_s := (sk.global_transform.basis.inverse() * axis_world).normalized()
-	var l_old := rest * CBClipLib.rot_basis(total)
+	var fmap := CBClipLib.finger_map(sk)
+	var l_old := rest * CBClipLib.local_basis(fmap, bone, total)
 	var l_new := pb.inverse() * Basis(axis_s, angle) * pb * l_old
-	var e_new := FSAEval.nearest_euler((rest.inverse() * l_new).get_euler(EULER_ORDER_ZYX), total)
+	var e_new := FSAEval.nearest_euler(CBClipLib.clip_basis(fmap, bone, rest.inverse() * l_new).get_euler(EULER_ORDER_ZYX), total)
+	if FSARig.is_finger(bone):
+		e_new = FSARig.clamp_finger(bone, e_new)   # a finger's range is on its total turn (own + the joint it follows)
 	var own_new := e_new - (total - own)
 	pose[bone] = doc.guard(bone, own, own_new)
 	_mirror_into(pose, bone)
@@ -1339,6 +1344,72 @@ func merge_rebuild(who: String = "you") -> bool:
 	return true
 
 
+## Fill (core/fill.gd): the span to fill. opts "from" / "to" (frames), else the keys around the current frame; [] when there is none
+func fill_span(opts: Dictionary = {}) -> Array:
+	if opts.has("from") and opts.has("to"):
+		var a := int(opts["from"])
+		var b := int(opts["to"])
+		return [a, b] if a >= 0 and b <= doc.frames and b - a >= 2 else []
+	return FSAFill.span_around(doc, frame)
+
+
+## make the frames between two keys (FSAFill.DEFAULTS for the settings). Filling the same span again replaces its fill and keeps
+## the settings you did not pass, so turning a knob refills live (one undo step while you drag). Returns {id, from, to, keys,
+## engine, match, feet} or {error}
+func fill_apply(opts: Dictionary = {}, who: String = "you") -> Dictionary:
+	var sp := fill_span(opts)
+	if sp.is_empty():
+		say("Fill needs a key before and after this frame, at least 2 frames apart (or from / to).", "warn")
+		return {"error": "no span"}
+	var a := int(sp[0])
+	var b := int(sp[1])
+	for k in doc.keys:
+		var kf := int((k as Dictionary)["f"])
+		if kf > a and kf < b and bool((k as Dictionary).get("lock", false)):
+			say("A locked key sits between f%d and f%d: unlock it to fill there." % [a, b], "warn")
+			return {"error": "locked key"}
+	var old := FSAFill.at_span(doc, a, b)
+	var want: Dictionary = (old.get("settings", {}) as Dictionary).duplicate()
+	for k in opts:
+		want[k] = opts[k]
+	var s := FSAFill.settings(want)
+	var made := FSAFill.make(doc, bones, stage.probe_skel, a, b, s)
+	if made.has("error"):
+		say("Fill: %s." % made["error"], "warn")
+		return {"error": made["error"]}
+	if (made["poses"] as Dictionary).is_empty():
+		say("Fill: f%d to f%d has no frame in between at this key step." % [a, b], "warn")
+		return {"error": "nothing between"}
+	var id := str(old["id"]) if not old.is_empty() else FSADoc.new_id(doc.fills, "fill")
+	mutate("Fill f%d-f%d" % [a, b], func() -> void: FSAFill.write(doc, bones, a, b, made, s, id), who)
+	var m: Dictionary = made["match"]
+	var how := FSAFill.describe(FSAFill.find(doc, id))
+	say("Filled %s (%d keys)." % [how, (made["poses"] as Dictionary).size()], "agent" if who != "you" else "ok")
+	return {"id": id, "from": a, "to": b, "keys": (made["poses"] as Dictionary).size(), "engine": s["engine"], "match": m,
+		"feet": made["feet"], "settings": s}
+
+
+## the library stretches that best join the two poses (FSAFill.matches); opts from / to, n
+func fill_matches(opts: Dictionary = {}) -> Array:
+	var sp := fill_span(opts)
+	if sp.is_empty():
+		return []
+	return FSAFill.matches(doc, bones, int(sp[0]), int(sp[1]), int(opts.get("n", 5)))
+
+
+## take a fill out ("" = every fill); returns how many keys went
+func fill_remove(id: String = "", who: String = "you") -> int:
+	var ids: Array = [id] if id != "" else doc.fills.map(func(fl: Dictionary) -> String: return str(fl["id"]))
+	if ids.is_empty() or (id != "" and FSAFill.find(doc, id).is_empty()):
+		return 0
+	var gone := [0]
+	mutate("Remove fill" if ids.size() == 1 else "Remove fills", func() -> void:
+		for i in ids:
+			gone[0] += FSAFill.remove(doc, str(i)), who)
+	say("Fill removed: %d keys went, the keys around it are as they were." % gone[0], "agent" if who != "you" else "ok")
+	return gone[0]
+
+
 ## a new clip from a blend: this clip, then `clip_b` taking over at `at` over `blend` frames (a transition you can edit)
 func make_transition_clip(clip_b: String, at: int, blend: int, new_name: String, who: String = "you") -> bool:
 	var cb := FSAEval.clip_src(clip_b)
@@ -1701,6 +1772,10 @@ func run_checks() -> Array:
 	var out: Array = []
 	for k in doc.keys:
 		var kd: Dictionary = k
+		var kpose := FSADoc.pose_of_key(kd, bones)
+		for b in bones:
+			if FSARig.finger_breaks(str(b), CBClipLib.bone_rot(kpose, str(b))):
+				out.append({"level": "warn", "f": int(kd["f"]), "text": "%s bends past a finger's natural range at f%d" % [b, int(kd["f"])]})
 		for b in (kd.get("rot", {}) as Dictionary):
 			var r: Array = kd["rot"][b]
 			var e := Vector3(float(r[0]), float(r[1]), float(r[2]))

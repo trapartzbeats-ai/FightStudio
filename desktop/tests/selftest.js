@@ -10,11 +10,14 @@ import { makeApi } from "../src/api.js";
 import * as A from "../src/core/adjust.js";
 import * as M from "../src/core/merge.js";
 import * as F from "../src/core/feet.js";
+import * as FG from "../src/core/fingers.js";
+import * as G from "../src/core/grip.js";
+import * as FL from "../src/core/fill.js";
 
 export async function selftest(app) {
   const lines = [];
   let pass = 0, fail = 0;
-  const ok = (c, what) => { if (c) pass++; else { fail++; lines.push("FAIL " + what); } };
+  const ok = (c, what) => { if (c) { pass++; if (what.startsWith("fill")) lines.push("ok   " + what); } else { fail++; lines.push("FAIL " + what); } };   // the fill checks carry their measurements
   const near = (a, b, t = 1e-3) => Math.abs(a - b) <= t;
 
   // euler order: three 'ZYX' == Rz * Ry * Rx (the clip format), round trip
@@ -290,7 +293,151 @@ export async function selftest(app) {
   }
   r = await call("import_motion", { path: "C:/nowhere/none.fbx", discard: true });
   ok(!r.ok, "api import_motion refuses a missing file");
+  // real fingers (2026-10-30): the retarget, the finger limits, the fingered Fist slider, the hand closing round a handle
+  if (app.fighter !== "vix") await app.setFighter("vix");
+  const body = app.stage.body;
+  if (body.fmap && body.fmap.size) {
+    const c = FG.fingers.shared.fingersR.c;
+    const backward = eulerOf(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(...c).normalize(), -60 * RAD));
+    ok(FG.fingerParts("fingersR", R.clampLimits("fingersR", backward))[0] * DEG > -20.5, "fingers: a knuckle bent 60 deg backwards is held at its limit");
+    ok(R.fingerBreaks("tipsR", backward), "fingers: checks see a finger bent backwards");
+    const fistR = R.rigData.controls.find((x) => x.name === "Fist R");
+    const fp = R.setControl(fistR, {}, 0.8);
+    ok(near(R.controlValue(fistR, fp), 0.8, 0.01) && FG.fingerParts("fingersR", fp.fingersR)[0] * DEG > 55, "fingers: the Fist slider curls a fingered hand into the palm");
+    const e0 = [0.2, -0.1, 0.3];
+    body.setLocalEuler("indexR", e0);
+    ok(dist3(body.localEuler("indexR"), e0) < 1e-5, "fingers: a finger turn reads back through the retarget");
+    body.apply({});
+    const size = [0.045, 0.5, 0.045];
+    const at = G.frame(body, "R", "cylinder", size);
+    const n = G.wrapHand(body, "R", "cylinder", size, at);
+    const inv = at.clone().invert();
+    const tip = body.worldPos("tipsR").applyMatrix4(inv);
+    ok(n >= 4 && Math.hypot(tip.x, tip.z) < 0.09, `wrap: the fingers close round a handle (${n} joints turned, middle joint ${(Math.hypot(tip.x, tip.z) * 100).toFixed(1)} cm from its axis)`);
+    body.apply({});
+  } else lines.push("skip fingers (no finger_frames.json for vix)");
   app.history.markSaved();
+
+  // FILL: the frames between two keys, the same as the Godot Animator's core/fill.gd (reference by ref_fill.gd)
+  if (app.fighter !== "vix") await app.setFighter("vix");
+  const B = app.bones;
+  const rf = await (await fetch("file:///D:/Cache/fight_studio_dev/ref_fill.json").catch(() => null))?.json?.().catch(() => null);
+  // the worst difference between the fill keys made here and Godot's (radians / metres), and frames one has and the other not
+  const fillDiff = (ref) => {
+    let worst = 0, missing = 0;
+    const mine = app.doc.keys.filter((k) => k.fill);
+    const theirs = ref.filter((k) => k.fill);
+    if (mine.length !== theirs.length) missing += Math.abs(mine.length - theirs.length);
+    for (const g of theirs) {
+      const k = app.doc.keyAt(g.f);
+      if (!k || !k.fill) { missing++; continue; }
+      for (const b of new Set([...Object.keys(g.rot || {}), ...Object.keys(k.rot || {})])) {
+        const x = (k.rot || {})[b] || [0, 0, 0], y = (g.rot || {})[b] || [0, 0, 0];
+        worst = Math.max(worst, ...[0, 1, 2].map((i) => Math.abs(x[i] - y[i])));
+      }
+      for (const ax of ["hips_dy", "hips_dx", "hips_dz"]) worst = Math.max(worst, Math.abs(Number(k[ax] || 0) - Number(g[ax] || 0)));
+    }
+    return { worst, missing };
+  };
+  const twoKeys = (name, frames, fps, keys) => {
+    app.newClip(name, frames, fps, false, false);
+    app.doc.keys = [];
+    for (const [f, p] of keys) app.doc.writeKey(f, p, B);
+    app.doc.normalize();
+  };
+  if (rf) {
+    const zero = rf.shape_input.a, pb = rf.shape_input.b;
+    let worst = 0, missing = 0;
+    for (const c of rf.shape) {
+      twoKeys("zz_fill_check", 48, 60, [[0, zero], [24, pb], [48, zero]]);
+      app.doc.keyAt(0).ease = "in";
+      await app.fillApply({ ...c.opts, from: 0, to: 24 });
+      const d = fillDiff(c.keys);
+      worst = Math.max(worst, d.worst);
+      missing += d.missing;
+    }
+    ok(missing === 0 && worst < 3e-4, `fill shape: ${rf.shape.length} settings give Godot's keys (worst ${worst.toFixed(5)} rad, ${missing} keys off)`);
+    ok(app.doc.fills.length === 1 && app.doc.keyAt(0).ease === "linear" && app.doc.keys.filter((k) => k.fill).every((k) => k.tag === "breakdown"), "fill: one fill, breakdown keys, key A eases linear");
+    app.setFrame(15);
+    ok(app.fillSpan().join() === "0,24", `fill: with the playhead inside a fill, the span is the whole fill (${app.fillSpan()})`);
+    const id = app.doc.fills[0].id;
+    const nFill = app.doc.keys.filter((k) => k.fill === id).length;
+    ok(app.fillRemove(id) === nFill && app.doc.keyFrames().join() === "0,24,48" && app.doc.keyAt(0).ease === "in", "fill remove: its keys go, key A's ease comes back");
+    app.undo();
+    ok(app.doc.fills.length === 1 && Doc.fromClip(app.doc.toClip()).fills.length === 1, "fill: undo brings it back, and it survives a save");
+    app.doc.writeKey(30, zero, B);
+    app.doc.keyAt(30).lock = true;
+    const before = app.doc.keyFrames().join();
+    ok((await app.fillApply({ from: 24, to: 48 })).error && app.doc.keyFrames().join() === before, "fill: a locked key in the span stops it");
+    const p12 = { ...zero, armR: [0, 0, 0.4] }, p36 = { ...zero, armR: [0, 0, 1.2] };
+    twoKeys("zz_fill_flow", 36, 60, [[0, zero], [12, p12], [36, p36]]);
+    await app.fillApply({ from: 12, to: 36, flow: 1 });
+    const df = fillDiff(rf.flow.keys);
+    ok(df.missing === 0 && df.worst < 3e-4, `fill flow: Godot's keys (worst ${df.worst.toFixed(5)})`);
+    // feet: the hips shift and turn over planted feet, then a step
+    for (const which of ["held", "step"]) {
+      twoKeys("zz_fill_feet", 30, 60, [[0, rf.feet.a], [30, rf.feet[which]]]);
+      app.doc.plant = true;
+      const res = await app.fillApply({ from: 0, to: 30 });
+      ok(JSON.stringify(res.feet) === JSON.stringify(rf.feet[which + "_result"]), `fill feet ${which}: ${JSON.stringify(res.feet)} like Godot ${JSON.stringify(rf.feet[which + "_result"])}`);
+      const d = fillDiff(rf.feet[which + "_keys"]);
+      ok(d.missing === 0 && d.worst < 0.02, `fill feet ${which}: the legs like Godot's (worst ${d.worst.toFixed(4)} rad)`);
+      if (which === "held") {
+        const body = app.stage.probe;
+        let drift = 0;
+        const start = {};
+        for (let f = 0; f <= 30; f++) {
+          body.apply(app.doc.basePose(f, B));
+          body.update();
+          for (const ft of ["footL", "footR"]) {
+            const p = body.worldPos(ft);
+            if (!f) start[ft] = p;
+            drift = Math.max(drift, Math.hypot(p.x - start[ft].x, p.z - start[ft].z));
+          }
+        }
+        ok(drift < 0.006, `fill feet: the planted feet stay put (${(drift * 1000).toFixed(1)} mm)`);
+      }
+    }
+    // a spin kick: Vix's forward smash without its strike keys keeps its full turn, its left foot steps (not slides)
+    if (rf.spin) {
+      await app.openClip("a_vix_fsmash", true);
+      app.doc.keys = app.doc.keys.filter((k) => k.f !== 10 && k.f !== 12);
+      const rs = await app.fillApply({ from: 8, to: 22, timing: "strike" });
+      const ds = fillDiff(rf.spin.keys);
+      ok(JSON.stringify(rs.feet) === JSON.stringify(rf.spin.feet) && ds.missing === 0 && ds.worst < 0.02, `fill spin: Godot's keys and feet (${JSON.stringify(rs.feet)}, worst ${ds.worst.toFixed(4)} rad)`);
+      ok(Math.abs(app.doc.basePose(15, B).hips[1] - (app.doc.basePose(14, B).hips[1] + app.doc.basePose(16, B).hips[1]) / 2) < 0.2 && app.doc.basePose(16, B).hips[1] > 3.2, "fill spin: the hips turn the long way, as keyed");
+    }
+    // library: a stretch of a clip found again and played back as it is
+    const x = await window.host.loadClip("a_al_fsmash");
+    if (x) {
+      twoKeys("zz_fill_lib", 18, Number(x.fps), [[0, poseAt(x, 6, B)], [18, poseAt(x, 24, B)]]);
+      const t0 = performance.now();
+      await app.fillLibrary(true);
+      const tIndex = performance.now() - t0;
+      const t1 = performance.now();
+      const ms = await app.fillMatches({ from: 0, to: 18, n: 6 });
+      const tSearch = performance.now() - t1;
+      lines.push(`  fill library: index ${FL.indexSize()} clips in ${tIndex.toFixed(0)} ms, search in ${tSearch.toFixed(0)} ms`);
+      const g = rf.library.matches[0];
+      ok(ms.length && ms[0].clip === g.clip && ms[0].from === g.from && ms[0].to === g.to && ms[0].mirror === g.mirror && Math.abs(ms[0].cost - g.cost) < 0.002,
+        `fill library: the best match is Godot's (${JSON.stringify(ms[0])} vs ${JSON.stringify(g)})`);
+      await app.fillApply({ from: 0, to: 18, engine: "library", pick: 0 });
+      const dl = fillDiff(rf.library.keys);
+      ok(dl.missing === 0 && dl.worst < 3e-4, `fill library: the in-betweens are Godot's (worst ${dl.worst.toFixed(5)})`);
+    } else lines.push("skip fill library (no a_al_fsmash)");
+  } else lines.push("skip fill reference (run ref_fill.gd)");
+  // through the agent API
+  twoKeys("zz_fill_api", 20, 30, [[0, {}], [16, { armR: [0, 0, 0.6] }]]);
+  r = await call("fill", { from: 0, to: 16, timing: "strike", overlap: 0.5 });
+  ok(r.ok && r.result.keys === 15 && r.result.settings.timing === "strike", `api fill ${JSON.stringify(r).slice(0, 160)}`);
+  r = await call("fills", {});
+  ok(r.ok && r.result.length === 1 && r.result[0].text.includes("strike"), "api fills lists it");
+  r = await call("fill_matches", { from: 0, to: 16, n: 3 });
+  ok(r.ok && r.result.length === 3, "api fill_matches gives 3 matches");
+  r = await call("fill_remove", {});
+  ok(r.ok && r.result.removed === 15 && !app.doc.fills.length, "api fill_remove takes it out");
+  app.history.markSaved();
+
   if (app.fighter !== "vix") await app.setFighter("vix");
   await app.openClip("w_walk", true);
   return { pass, fail, lines };

@@ -14,7 +14,7 @@ const clone = (o) => structuredClone(o);
 export class Doc {
   constructor() {
     Object.assign(this, { name: "", fps: 30, frames: 24, loop: false, override: false, plant: false, ease: "linear", keys: [], layers: [],
-      constraints: [], locks: {}, markers: [], props: [], extra: {}, bakedOn: "", outsideEdit: false, saved: "" });
+      constraints: [], locks: {}, markers: [], props: [], fills: [], extra: {}, bakedOn: "", outsideEdit: false, saved: "" });
   }
 
   // local time like Godot's Time.get_datetime_string_from_system(): the studio.saved stamp
@@ -46,6 +46,7 @@ export class Doc {
     d.locks = clone(st.locks || {});
     d.markers = clone(st.markers || []);
     d.props = clone(st.props || []);
+    d.fills = clone(st.fills || []);   // in-betweens made by Fill (core/fill.js); their keys carry fill: id
     d.bakedOn = String(st.baked_on || "");
     d.saved = String(st.saved || "");   // stamped on every Fight Studio save; the gen_*.py generators skip such a clip
     if (d.outsideEdit) {
@@ -65,7 +66,7 @@ export class Doc {
   toDict() {
     return clone({ name: this.name, fps: this.fps, frames: this.frames, loop: this.loop, override: this.override, plant: this.plant, ease: this.ease,
       keys: this.keys, layers: this.layers, constraints: this.constraints, locks: this.locks, markers: this.markers, props: this.props,
-      extra: this.extra, bakedOn: this.bakedOn });
+      fills: this.fills, extra: this.extra, bakedOn: this.bakedOn });
   }
 
   loadDict(d) {
@@ -83,6 +84,7 @@ export class Doc {
     if (Object.keys(this.locks).length) st.locks = clone(this.locks);
     if (this.markers.length) st.markers = clone(this.markers);
     if (this.props.length) st.props = clone(this.props);
+    if (this.fills.length) st.fills = clone(this.fills);
     if (this.layers.length) st.layers = clone(this.layers);
     if (this.constraints.length) st.constraints = clone(this.constraints);
     if (!baked.length) c.keys = clone(this.keys);

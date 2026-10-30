@@ -59,6 +59,10 @@ const METHODS := {
 	"adjust": "{bone, x=0, y=0, z=0 (degrees, the TOTAL turn of this adjustment), scope: all|frame|range, frame? (scope frame; default current), from?, to? (scope range), ease=6, mirror=false} -> {layers}; all zero removes it",
 	"adjust_restore": "{id? | bone?} (neither = all adjustments) -> {restored}",
 	"adjustments": "{} -> [{id, bone, scope, start, end, turn (degrees), text}]",
+	"fill": "{from?, to? (default: the keys around the current frame), engine: shape|library, timing: smooth|even|strike|settle, flow=0.6, overlap=0.3, anticipate=0, overshoot=0 (0..1), feet=true (planted feet held / stepped), air=0 (cm jump arc), step=0 (key every N frames, 0 = auto), pick=0 (library match)} -> {id, from, to, keys, engine, match, feet, settings}: the frames between two keys made for you; the same span again replaces its fill and keeps the settings you leave out",
+	"fill_matches": "{from?, to?, n=5} -> [{clip, from, to, mirror, cost, score (0..100), frames (how long that change took there)}]: library stretches that join the two poses",
+	"fill_remove": "{id? (none = every fill)} -> {removed (keys)}",
+	"fills": "{} -> [{id, a, b, settings, match?, text}]",
 	"feet": "{planted? (sets the clip's plant flag first), step=1} -> {planted, soles {footL: {tilt0, ankle_cm}}, counts {flat, pivot, limit, sink, air}, frames [{f, footL: {state, low_cm, tilt}, footR}]}: how the feet stand in the match, per frame",
 	"remove_layer": "{id}",
 	"set_active_layer": "{id ('' = base)} -> where keys go",
@@ -362,6 +366,19 @@ func _dispatch(m: String, p: Dictionary) -> Variant:
 				out.append({"id": l["id"], "bone": l.get("bone", ""), "scope": l.get("scope", ""), "start": l.get("start", 0), "end": l.get("end", -1),
 					"turn": [snappedf(rad_to_deg(v.x), 0.01), snappedf(rad_to_deg(v.y), 0.01), snappedf(rad_to_deg(v.z), 0.01)], "text": FSAAdjust.describe(l)})
 			return out
+		"fill":
+			return app.fill_apply(p.duplicate(true), who)
+		"fill_matches":
+			return app.fill_matches(p)
+		"fill_remove":
+			return {"removed": app.fill_remove(str(p.get("id", "")), who)}
+		"fills":
+			var fls: Array = []
+			for fl in app.doc.fills:
+				var fd: Dictionary = (fl as Dictionary).duplicate(true)
+				fd["text"] = FSAFill.describe(fl)
+				fls.append(fd)
+			return fls
 		"feet":
 			if p.has("planted") and bool(p["planted"]) != app.doc.plant:
 				app.set_clip_prop("plant", bool(p["planted"]))

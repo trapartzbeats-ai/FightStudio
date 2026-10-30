@@ -16,6 +16,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { FORMAT, eulerOf, keyRot, reduceKeys } from "./clip.js";
 import { nearestEuler } from "./evalc.js";
 import { clampLimits } from "./rig.js";
+import { unmapQuat } from "./fingers.js";
 
 export const SIDE = { L: "Right", R: "Left" };   // our L is Mixamo's Right: both rigs face +Z
 export const FPS_OUT = 60;
@@ -172,7 +173,7 @@ export function retarget(source, body, opts = {}) {
       const gq = delta.multiply(align.get(n)).multiply(ourRest.get(n).q);
       g.set(n, gq);
       const local = gp.clone().invert().multiply(gq);
-      let e = eulerOf(restLocal.clone().invert().multiply(local));
+      let e = eulerOf(unmapQuat(body.fmap, n, restLocal.clone().invert().multiply(local)));   // fingers onto the shared hand
       if (prev[n]) e = nearestEuler(e, prev[n]);
       prev[n] = e;
       if (Math.hypot(...e) > 1e-4) rot[n] = e.map((x) => Math.round(x * 10000) / 10000);

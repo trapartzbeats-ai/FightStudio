@@ -151,6 +151,92 @@ const FOLLOW := {
 }
 
 
+## FINGER RETARGET (2026-10-30). Finger turns in clips are kept on ONE shared hand (data/finger_frames.json "shared_hands",
+## the average of every fingered fighter's hand) and each fighter turns them onto its own hand when a pose goes on the
+## skeleton: R_own = M * R * M^T, M = own hand frame * shared hand frame^T (one per hand: wrist -> knuckles, across the
+## knuckles, the palm). The models' hands sit up to ~50 degrees apart, so the same numbers curled one hand and bent another
+## sideways. Fighters without finger frames (plain rig v4 hands) play the numbers as they are.
+const FINGER_FRAMES := "res://game/packs/city_breaker/data/finger_frames.json"
+const FINGER_BONES := ["fingers", "tips", "nail", "thumb", "thumb%s2", "index", "index%s2", "index%s3", "ring", "ring%s2",
+	"ring%s3", "pinky", "pinky%s2", "pinky%s3"]
+static var _finger_data: Dictionary = {}
+static var _finger_maps: Dictionary = {}    ## fighter key -> {bone: Basis}
+
+
+## data/finger_frames.json (loaded once): shared / shared_hands / hands / thickness / fighters
+static func finger_data() -> Dictionary:
+	if _finger_data.is_empty():
+		var p: Variant = JSON.parse_string(FileAccess.get_file_as_string(FINGER_FRAMES)) if FileAccess.file_exists(FINGER_FRAMES) else null
+		_finger_data = p if p is Dictionary else {"none": true}
+	return _finger_data
+
+
+## the fighter a skeleton belongs to (from its model's scene file <key>_fight.glb; kept on the skeleton), "" for others
+static func fighter_key(skel: Skeleton3D) -> String:
+	if skel.has_meta("cb_key"):
+		return str(skel.get_meta("cb_key"))
+	var key := ""
+	var n: Node = skel
+	while n != null and key == "":
+		if n.scene_file_path.ends_with("_fight.glb"):
+			key = n.scene_file_path.get_file().trim_suffix("_fight.glb")
+		n = n.get_parent()
+	skel.set_meta("cb_key", key)
+	return key
+
+
+## a fighter's finger retarget: bone -> M (empty when the fighter has no finger frames)
+static func finger_map_of(key: String) -> Dictionary:
+	if _finger_maps.has(key):
+		return _finger_maps[key]
+	finger_data()
+	var out := {}
+	var own: Dictionary = (_finger_data.get("hands", {}) as Dictionary).get(key, {})
+	var sh: Dictionary = _finger_data.get("shared_hands", {})
+	for side: String in ["L", "R"]:
+		if not own.has(side) or not sh.has(side):
+			continue
+		var m := (_hand_basis(own[side]) * _hand_basis(sh[side]).transposed()).orthonormalized()
+		for b: String in FINGER_BONES:
+			out[(b % side) if "%s" in b else b + side] = m
+	_finger_maps[key] = out
+	return out
+
+
+## the finger retarget of the fighter this skeleton belongs to (found from the model's scene file, then kept on it)
+static func finger_map(skel: Skeleton3D) -> Dictionary:
+	if skel.has_meta("cb_finger_map"):
+		return skel.get_meta("cb_finger_map")
+	var key := fighter_key(skel)
+	var m := finger_map_of(key) if key != "" else {}
+	skel.set_meta("cb_finger_map", m)
+	return m
+
+
+## a bone's local turn on the skeleton from its clip euler (finger joints turned onto this fighter's hand)
+static func local_basis(fmap: Dictionary, name: String, e: Vector3) -> Basis:
+	var b := rot_basis(e)
+	if fmap.has(name):
+		var m: Basis = fmap[name]
+		return m * b * m.transposed()
+	return b
+
+
+## the other way: a bone's local turn read off the skeleton back to the clip's frame (Fight Studio's tools)
+static func clip_basis(fmap: Dictionary, name: String, local: Basis) -> Basis:
+	if fmap.has(name):
+		var m: Basis = fmap[name]
+		return m.transposed() * local * m
+	return local
+
+
+static func _hand_basis(h: Dictionary) -> Basis:
+	var a: Array = h["along"]
+	var c: Array = h["across"]
+	var p: Array = h["palm"]
+	return Basis(Vector3(a[0], a[1], a[2]), Vector3(c[0], c[1], c[2]), Vector3(p[0], p[1], p[2]))
+
+
 ## a bone's rotation in a pose, with the finger follow added
 static func bone_rot(pose: Dictionary, name: String) -> Vector3:
 	var e: Vector3 = pose.get(name, Vector3.ZERO)
@@ -162,11 +248,12 @@ static func bone_rot(pose: Dictionary, name: String) -> Vector3:
 
 ## put a pose straight on the skeleton (the Studio shows the frame you are on)
 static func apply_pose(skel: Skeleton3D, pose: Dictionary) -> void:
+	var fmap := finger_map(skel)
 	for i in skel.get_bone_count():
 		var name := skel.get_bone_name(i)
 		var rest := skel.get_bone_rest(i)
 		var e: Vector3 = bone_rot(pose, name)
-		var t := Transform3D(rest.basis * rot_basis(e), rest.origin)
+		var t := Transform3D(rest.basis * local_basis(fmap, name, e), rest.origin)
 		if name == "hips":
 			t.origin += Vector3(float(pose.get("_dx", 0.0)), float(pose.get("_dy", 0.0)), float(pose.get("_dz", 0.0)))
 		skel.set_bone_pose(i, t)
@@ -179,6 +266,7 @@ static func build_animation(clip: Dictionary, skel: Skeleton3D, root: Node3D) ->
 	anim.length = maxf(float(clip.get("frames", 24)) / fps, 0.05)
 	anim.loop_mode = Animation.LOOP_LINEAR if bool(clip.get("loop", false)) else Animation.LOOP_NONE
 	var base := str(root.get_path_to(skel))
+	var fmap := finger_map(skel)
 	var keys := sorted_keys(clip)
 	if _eased(clip):
 		# eased / spline clips: bake a key on every clip frame from pose_at, so the Studio's player matches the game exactly
@@ -204,7 +292,7 @@ static func build_animation(clip: Dictionary, skel: Skeleton3D, root: Node3D) ->
 			var e := _key_rot(k, name)
 			if FOLLOW.has(name):
 				e += _key_rot(k, str(FOLLOW[name][0])) * float(FOLLOW[name][1])
-			var q := (rest.basis * rot_basis(e)).get_rotation_quaternion()
+			var q := (rest.basis * local_basis(fmap, name, e)).get_rotation_quaternion()
 			anim.rotation_track_insert_key(rt, float(k["f"]) / fps, q)
 		if name == "hips":
 			var pt := anim.add_track(Animation.TYPE_POSITION_3D)

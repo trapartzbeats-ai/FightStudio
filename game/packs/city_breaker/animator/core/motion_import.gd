@@ -188,6 +188,7 @@ static func retarget(source: Dictionary, ours: Skeleton3D, opts: Dictionary = {}
 		src.force_update_all_bone_transforms()
 		var g := {}      # our bone -> global pose rotation (skeleton space)
 		var rot := {}
+		var fmap := CBClipLib.finger_map(ours)
 		for i in ours.get_bone_count():
 			var par := ours.get_bone_parent(i)
 			var gp: Quaternion = g[par] if par >= 0 else Quaternion.IDENTITY
@@ -201,8 +202,9 @@ static func retarget(source: Dictionary, ours: Skeleton3D, opts: Dictionary = {}
 			var gq: Quaternion = delta * (align[i] as Quaternion) * (our_rest[i] as Transform3D).basis.orthonormalized().get_rotation_quaternion()
 			g[i] = gq
 			var local := gp.inverse() * gq
-			var e := Basis(rest_local.inverse() * local).get_euler(EULER_ORDER_ZYX)
 			var bn := ours.get_bone_name(i)
+			# finger joints go into the clip on the shared hand (CBClipLib finger retarget)
+			var e := CBClipLib.clip_basis(fmap, bn, Basis(rest_local.inverse() * local)).get_euler(EULER_ORDER_ZYX)
 			if prev.has(bn):
 				e = FSAEval.nearest_euler(e, prev[bn])
 			prev[bn] = e

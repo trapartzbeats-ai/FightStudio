@@ -1,6 +1,7 @@
 // What the app knows about rig v4 (shared with the Godot Animator: the same data/animator_rig.json): groups, masks, limbs,
 // mirror names, axis hints, joint limits (a knee never bends forward) and controls (one slider, many bones).
-import { clamp } from "./clip.js";
+import { clamp, FOLLOW } from "./clip.js";
+import * as FG from "./fingers.js";
 
 export const GROUPS = [
   ["Body", ["root", "hips", "torso", "chest", "neck", "head"]],
@@ -139,15 +140,33 @@ export function hint(b) {
   return "X / Y / Z turn the bone about its own axes";
 }
 
+// clamp a bone rotation to the rig limits (a finger joint that follows no other also to its natural range; a follower's
+// range is on its TOTAL turn: clampFingerTotal)
 export function clampLimits(b, e) {
   const lim = rigData.limits[b];
-  if (!lim) return e;
-  const out = [...e];
-  ["x", "y", "z"].forEach((ax, i) => {
+  let out = [...e];
+  if (lim) ["x", "y", "z"].forEach((ax, i) => {
     if (lim[ax]) out[i] = clamp(out[i], lim[ax][0], lim[ax][1]);
   });
-  return out;
+  if (FG.isFinger(b) && !FOLLOW[b]) out = FG.clampFinger(b, out, rigFile.finger_limits);
+  return lim || FG.isFinger(b) ? out : e;
 }
+
+// animator_rig.json "finger_limits" (degrees per joint kind: curl / spread / twist)
+export const fingerLimits = () => rigFile.finger_limits || {};
+
+// a finger joint's total turn (own + the joint it follows) kept inside finger_limits
+export const clampFingerTotal = (b, total) => (FG.isFinger(b) ? FG.clampFinger(b, total, rigFile.finger_limits) : total);
+
+// does a finger joint's TOTAL turn leave its natural range?
+export function fingerBreaks(b, total) {
+  if (!FG.isFinger(b)) return false;
+  const c = FG.clampFinger(b, total, rigFile.finger_limits);
+  return Math.hypot(c[0] - total[0], c[1] - total[1], c[2] - total[2]) > 0.01;
+}
+
+// a control's drives for the fighter being posed: a fingered hand curls on its own axes (drives_fingered), a plain one on X
+export const drives = (ctl) => (FG.fingers.shared && Object.keys(FG.fingers.shared).length && ctl.drives_fingered ? ctl.drives_fingered : ctl.drives || []);
 
 // an edit on top of the clip never turns a joint past its rig limits (knees never bend forward); where the clip itself is
 // already past a limit, the clip's own value is the edge (an edit never makes it worse)
@@ -185,7 +204,7 @@ function setChan(pose, bone, ax, v) {
 
 export function controlValue(ctl, pose) {
   let num = 0, den = 0;
-  for (const d of ctl.drives || []) {
+  for (const d of drives(ctl)) {
     const amt = Number(d[2]);
     num += amt * chan(pose, d[0], d[1]);
     den += amt * amt;
@@ -196,6 +215,6 @@ export function controlValue(ctl, pose) {
 export function setControl(ctl, pose, value) {
   const out = { ...pose };
   const cur = controlValue(ctl, pose);
-  for (const d of ctl.drives || []) setChan(out, d[0], d[1], chan(out, d[0], d[1]) + (value - cur) * Number(d[2]));
+  for (const d of drives(ctl)) setChan(out, d[0], d[1], chan(out, d[0], d[1]) + (value - cur) * Number(d[2]));
   return out;
 }

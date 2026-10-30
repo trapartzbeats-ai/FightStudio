@@ -60,6 +60,7 @@ Options after `--`: `--fighter=` `--clip=` `--layout=1|2|3|4|strip|4+strip` `--a
 | Clips | Every clip (search, filters: mine / world `w_` / moves `a_` / this fighter's own / baked GLB animations). Open, New, Duplicate, AS LAYER, TO TRASH (`D:/Cache/fight_studio_trash`, never deleted). |
 | Properties | The selected bone's X / Y / Z (degrees) with per-channel locks, mirror to the other side, body move (hips shift), this key's ease / type / lock, clip settings (plant feet, override, default ease, note), the move's hit / clear marks and your markers. |
 | Controls | One slider drives many bones: Fist L / R, Spine bend / twist / side, Head look / nod, Crouch, Guard up, Tail curl / sway, Ears back. The slider reads the pose. Add your own (bone, axis, amount), SAVE CONTROLS. |
+| Fill | The frames between two keys, made for you: by the rules of good motion (SHAPE) or from how your own clips make the same change (LIBRARY). See Filling between keys. |
 | Layers | KEYS layers (tweak an arm without touching the base keys; KEYS GO HERE makes K key into it) and CLIP layers (blend another clip in). Modes add / add_delta / override, weight, mute / solo, bone masks (Upper body, Arms, Legs...), range with fade in / out, offset / speed / cycle. |
 | Constraints | IK arm / leg (target fixed, keyed, or on a bone), FREEZE (pin), AIM (head follows a point), LIMIT, COPY rotation, FLOOR / PLANT. Influence, range, blend frames, order. BAKE ALL INTO KEYS. |
 | Outliner | Bones by body part with lock ticks and key counts; click a group to select it all. |
@@ -134,6 +135,43 @@ An adjustment never turns a joint past its rig limits, so knees never bend forwa
 limit, the adjustment won't push it further. Each adjustment is an add layer tagged `adjust` (`core/adjust.gd`, `FSAAdjust`).
 Agents use `studio_adjust(bone, x, y, z, scope, frame, start, end, ease, mirror)` and `studio_adjust_restore(bone)`.
 
+## Filling between keys (Fill panel)
+
+Makes the frames between two keys for you, so two good poses become a move. The made frames are plain keys (type
+**breakdown**, blue in the Dope Sheet): the game plays them as they are, and you can still edit any of them.
+
+1. **Pick the span.** Put the playhead between two keys (2 frames apart or more), or tick **play range** to use IN / OUT.
+   Inside a fill, the span is the whole fill.
+2. **Pick the engine:**
+   - **SHAPE** makes the move by the rules of good motion:
+     - **timing**: *smooth* (eases in and out), *even*, *strike* (slow start, hits the end pose fast), *settle* (fast start,
+       eases into it).
+     - **Flow**: carries the speed the motion has coming into the first key and going out of the last, so it doesn't stop at
+       the keys.
+     - **Overlap**: each joint trails the one it hangs from and catches up by the end: the hand after the arm, the arm after
+       the chest, the tail after the hips. Legs don't trail.
+     - **Anticipate**: a small wind-up the other way first.
+     - **Overshoot**: goes a little past the end pose and settles onto it.
+   - **LIBRARY** looks through every clip (mirrored too) for the stretch that best joins the two poses, plays it at your
+     span's length and bends it so it starts and ends exactly on your keys. **SEARCH** lists the matches with a score and how
+     many frames that change took there (a hint for your span's length). Under 50% it says the match is weak: SHAPE will
+     usually do better.
+3. **FILL.** Once a span is filled, every knob changes it live (one undo step while you drag).
+
+On every fill:
+- Every joint stays inside its natural range: knees never bend forward.
+- **hold planted feet** (planted clips): a foot standing at both keys stays on its spot (leg IK, flat). A standing foot the
+  keys move takes a step on an arc instead of sliding. In a spin (the hips turn a lot) a held foot pivots on its spot.
+- A turn keyed past half a circle (a spin kick) stays a spin, the way the game plays the keys.
+- **air** (cm): the hips go up on a jump arc that high in the middle.
+- **key every** N frames (0: every 2 at 60 fps, every frame at 30).
+
+**REMOVE** takes a fill out: its keys go and the keys around it are as they were. **Filled** lists every fill on the clip
+(GO puts the playhead in it). The settings are saved with the clip (`"studio": {"fills": [...]}`), so a fill can still be
+changed or removed after a save. `core/fill.gd` (`FSAFill`); the research and design are in `FILL_PLAN.md`. Agents use
+`studio_fill(start, end, engine, timing, flow, overlap, anticipate, overshoot, feet, air, step, pick)`,
+`studio_fill_matches` and `studio_fill_remove`.
+
 ## Merging clips (Merge panel)
 
 Builds one animation from several, like layering clips in Blender's NLA editor with some parts muted. The **open clip is
@@ -207,7 +245,8 @@ unlink), `studio_set_key_values`, `studio_set_propagate`, `studio_frames`, `stud
 `studio_controls`, `studio_layers`, `studio_constraints`, `studio_freeze`, `studio_lock`, `studio_sockets`,
 `studio_screenshot` (returns the picture: the four-angle sheet, a view or the window), `studio_view`, `studio_checks`,
 `studio_transition`, `studio_undo`, `studio_history`, `studio_say`, `studio_bake_glb`, `studio_import_motion`, `studio_merge`,
-`studio_adjust`, `studio_adjust_restore`, `studio_feet`, and `studio_call` for anything else.
+`studio_adjust`, `studio_adjust_restore`, `studio_feet`, `studio_fill`, `studio_fill_matches`, `studio_fill_remove`, and
+`studio_call` for anything else.
 Agent edits go through the same undo and show live (a purple frame and AGENT EDITING in the views).
 
 ## Checks
@@ -215,13 +254,14 @@ Agent edits go through the same undo and show live (a purple frame and AGENT EDI
 ```
 godot --headless --path . --script res://game/packs/city_breaker/animator/tests/animator_check.gd
 ```
-67 checks: Euler order, mirror, limits, keys, undo / redo, retime, frames, locked keys and channels, linked and same-pose
+151 checks: Euler order, mirror, limits, keys, undo / redo, retime, frames, locked keys and channels, linked and same-pose
 propagation, keys / clip layers, IK on target, a frozen foot staying put, bake, save round trip, outside-edit detection,
-and the agent API.
+Merge, Adjust, Feet, Fill (timings, flow, overlap, anticipate, overshoot, feet held and stepped, a spin, the library) and
+the agent API.
 
 ## Files
 
 `animator.gd` (the app: every edit goes through it), `core/` (doc = the clip, eval = layers + constraints + IK, history,
-rig = groups, mirror, limits, controls), `ui/` (stage = the 3D world, view, canvas, strip, dock, dope sheet, graph, panels,
+rig = groups, mirror, limits, controls, fill = the in-betweens), `ui/` (stage = the 3D world, view, canvas, strip, dock, dope sheet, graph, panels,
 menus, toolbar, theme), `api/` (server + methods), `mcp/` (the MCP server), `tests/`. Data it writes: `data/clips`,
 `data/poses`, `data/animator_rig.json`, `data/sockets.json` (when you save sockets).

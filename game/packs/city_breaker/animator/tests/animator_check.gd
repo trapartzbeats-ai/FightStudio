@@ -11,6 +11,8 @@ var passes := 0
 func ok(cond: bool, what: String) -> void:
 	if cond:
 		passes += 1
+		if what.begins_with("fill"):
+			print("ok   ", what)   # the fill checks carry their measurements: keep them in the log
 	else:
 		fails += 1
 		print("FAIL ", what)
@@ -43,6 +45,7 @@ func _run() -> void:
 	_merge()
 	_adjust()
 	_feet()
+	_fill()
 	await _api()
 	print("ANIMATOR CHECK: %d passed, %d failed" % [passes, fails])
 	quit(1 if fails > 0 else 0)
@@ -269,6 +272,20 @@ func _api() -> void:
 		var hinge: Vector3 = app.editable_pose().get(str(t[2]), Vector3.ZERO)
 		ok(bool(r.get("ok", false)) and float((r["result"] as Dictionary)["miss_m"]) < 0.01 and absf(hinge.y) < 1e-3 and absf(hinge.z) < 1e-3,
 			"ik reaches %s %s on the %s hinge (%s, %s deg)" % [t[0], str(t[1]), t[2], str(r.get("result", r)), str(hinge * 57.2958)])
+	# fill through the API: two keys, a fill between them, listed, removed
+	app.doc.write_key(0, FSADoc.pose_of_key({}, app.bones), app.bones)
+	var p16 := FSADoc.pose_of_key({}, app.bones)
+	p16["armR"] = Vector3(0, 0, 0.6)
+	app.doc.write_key(16, p16, app.bones)
+	app.doc.keys = app.doc.keys.filter(func(k: Dictionary) -> bool: return int(k["f"]) == 0 or int(k["f"]) >= 16)
+	r = await api.call_method("fill", {"from": 0, "to": 16, "timing": "strike", "overlap": 0.5})
+	ok(bool(r.get("ok", false)) and int((r["result"] as Dictionary).get("keys", 0)) == 15 and str((r["result"] as Dictionary)["settings"]["timing"]) == "strike", "api fill (%s)" % str(r).left(200))
+	r = await api.call_method("fills", {})
+	ok(bool(r.get("ok", false)) and (r["result"] as Array).size() == 1 and str((r["result"] as Array)[0]["text"]).contains("strike"), "api fills lists it")
+	r = await api.call_method("fill_matches", {"from": 0, "to": 16, "n": 3})
+	ok(bool(r.get("ok", false)) and (r["result"] as Array).size() == 3, "api fill_matches gives 3 matches")
+	r = await api.call_method("fill_remove", {})
+	ok(bool(r.get("ok", false)) and int((r["result"] as Dictionary)["removed"]) == 15 and app.doc.fills.is_empty(), "api fill_remove takes it out")
 	r = await api.call_method("checks", {})
 	ok(bool(r.get("ok", false)), "api checks")
 	r = await api.call_method("nope", {})
@@ -328,7 +345,7 @@ func _feet() -> void:
 	ok(app.doc.plant, "feet: Carter's wait is planted")
 	var r := app.feet_report(1)
 	ok((r["frames"] as Array).size() == app.doc.frames + 1, "feet: a row per frame")
-	ok(float(r["soles"]["footL"]["tilt0"]) > 8.0, "feet: Carter's own left sole is off level at rest (%.1f deg), so the rest pose is no guide" % float(r["soles"]["footL"]["tilt0"]))
+	ok(float(r["soles"]["footL"]["tilt0"]) >= 0.0 and float(r["soles"]["footL"]["tilt0"]) < 45.0, "feet: the report gives Carter's own left sole tilt at rest (%.1f deg)" % float(r["soles"]["footL"]["tilt0"]))
 	var bad := ""
 	for row in r["frames"]:
 		var lo := "footL" if float(row["footL"]["low_cm"]) <= float(row["footR"]["low_cm"]) else "footR"
@@ -344,6 +361,10 @@ func _feet() -> void:
 	ok(int((r2["counts"] as Dictionary).get("sink", 0)) > 0, "feet: unplanted, the same clip has feet in the floor (%d)" % int((r2["counts"] as Dictionary).get("sink", 0)))
 	app.undo()
 	ok(app.doc.plant, "feet: planted again after undo")
+	# a model whose own sole is tilted at rest (Carter's was until his 2026-10-30 model): the rest pose is no guide
+	app.set_fighter("hype")
+	var rh := app.feet_report(1)
+	ok(float(rh["soles"]["footL"]["tilt0"]) > 8.0, "feet: Hype's own left sole is off level at rest (%.1f deg), so the rest pose is no guide" % float(rh["soles"]["footL"]["tilt0"]))
 	app.set_fighter(was_f)
 	app.open_clip(was, true)
 
@@ -392,4 +413,255 @@ func _adjust() -> void:
 	for i in 10:
 		app.adjust_part("handR", Vector3(0, 0, deg_to_rad(float(i + 1))), "all")
 	ok(app.history.undo_stack.size() == n0 + 1, "adjust: a drag (many small turns) is one undo step")
+	app.open_clip(was, true)
+
+
+## progress of one channel from key A to key B at frame f (0 at A, 1 at B)
+func _prog(bone: String, ax: int, f: int, a: int, b: int) -> float:
+	var B := app.bones
+	var xa := (app.doc.base_pose(float(a), B)[bone] as Vector3)[ax]
+	var xb := (app.doc.base_pose(float(b), B)[bone] as Vector3)[ax]
+	return ((app.doc.base_pose(float(f), B)[bone] as Vector3)[ax] - xa) / (xb - xa)
+
+
+## every key a fill made inside the limits, no knee bent forward
+func _fill_keys_ok() -> String:
+	for k in app.doc.keys:
+		var kd: Dictionary = k
+		if not kd.has("fill"):
+			continue
+		for b in (kd["rot"] as Dictionary):
+			var r: Array = kd["rot"][b]
+			var e := Vector3(float(r[0]), float(r[1]), float(r[2]))
+			if FSARig.breaks_limits(str(b), e) or (str(b).begins_with("knee") and e.x < -0.01):
+				return "f%d %s %s" % [int(kd["f"]), b, e]
+	return ""
+
+
+## the most the feet move (flat, metres) away from where they stand at frame 0, over frames 0..n
+func _feet_drift(n: int) -> float:
+	var sk := app.stage.probe_skel
+	var start := {}
+	var worst := 0.0
+	for f in n + 1:
+		CBClipLib.apply_pose(sk, app.doc.base_pose(float(f), app.bones))
+		sk.force_update_all_bone_transforms()
+		for ft in ["footL", "footR"]:
+			var p := sk.global_transform * sk.get_bone_global_pose(sk.find_bone(ft)).origin
+			if f == 0:
+				start[ft] = p
+			worst = maxf(worst, Vector2(p.x - (start[ft] as Vector3).x, p.z - (start[ft] as Vector3).z).length())
+	return worst
+
+
+## a pose with the hips moved / turned and both feet put back where they were by leg IK (+ `move` for footR: a step)
+func _feet_back(pa: Dictionary, hips: Dictionary, move: Vector3) -> Dictionary:
+	var sk := app.stage.probe_skel
+	CBClipLib.apply_pose(sk, pa)
+	sk.force_update_all_bone_transforms()
+	var at := {}
+	for ft in ["footL", "footR"]:
+		var g := sk.get_bone_global_pose(sk.find_bone(ft))
+		at[ft] = [sk.global_transform * g.origin, g.basis.orthonormalized()]
+	var pb := pa.duplicate()
+	for k in hips:
+		if hips[k] is Vector3:
+			pb[k] = (pb.get(k, Vector3.ZERO) as Vector3) + (hips[k] as Vector3)
+		else:
+			pb[k] = float(pb.get(k, 0.0)) + float(hips[k])
+	CBClipLib.apply_pose(sk, pb)
+	sk.force_update_all_bone_transforms()
+	var touched := {}
+	for side in ["L", "R"]:
+		var ids := [sk.find_bone("leg" + side), sk.find_bone("knee" + side), sk.find_bone("foot" + side)]
+		var w: Vector3 = (at["foot" + side] as Array)[0]
+		if side == "R":
+			w += move
+		FSAEval.solve_two_bone(sk, ids[0], ids[1], ids[2], sk.global_transform.affine_inverse() * w, Vector3.INF, (at["foot" + side] as Array)[1], 1.0)
+		sk.force_update_all_bone_transforms()
+		for i in ids:
+			touched[i] = true
+	return FSAEval.read_back(sk, pb, touched)
+
+
+func _fill() -> void:
+	var was := app.doc.name
+	var B := app.bones
+	ok(app.dock.panels.has("Fill"), "fill: the Fill panel is in the dock")
+	# ---- a blank clip, A (rest) -> B (torso forward, arm out, hand bent, hips down) -> rest
+	app.new_clip("zz_fill_check", 48, 60, false, false)
+	var zero := FSADoc.pose_of_key({}, B)
+	var pb := zero.duplicate()
+	pb["torso"] = Vector3(0.3, 0, 0)
+	pb["armR"] = Vector3(0, 0, 0.8)
+	pb["handR"] = Vector3(0.5, 0, 0)
+	pb["_dy"] = -0.05
+	app.doc.keys = []
+	app.doc.write_key(0, zero, B)
+	app.doc.write_key(24, pb, B)
+	app.doc.write_key(48, zero, B)
+	app.doc.key_at(0)["ease"] = "in"
+	app.doc.normalize()
+	var r := app.fill_apply({"from": 0, "to": 24, "flow": 0.0, "overlap": 0.0, "timing": "smooth"})
+	var made := app.doc.keys.filter(func(k: Dictionary) -> bool: return str(k.get("fill", "")) == str(r.get("id", "-")))
+	ok(made.size() == 11 and int(made[0]["f"]) == 2 and int(made[10]["f"]) == 22, "fill: a key every 2 frames at 60 fps between f0 and f24 (%d)" % made.size())
+	ok(made.all(func(k: Dictionary) -> bool: return str(k.get("tag", "")) == "breakdown"), "fill: its keys are tagged breakdown")
+	ok(str(app.doc.key_at(0).get("ease", "")) == "linear", "fill: key A eases linear while the fill is on")
+	app.set_frame(15.0)
+	ok(app.fill_span() == [0, 24], "fill: with the playhead inside a fill, the span is the whole fill, not its breakdown keys (%s)" % str(app.fill_span()))
+	ok((FSADoc.pose_of_key(app.doc.key_at(24), B)["armR"] as Vector3).distance_to(Vector3(0, 0, 0.8)) < 1e-4, "fill: key B is untouched")
+	ok(near(_prog("armR", 2, 6, 0, 24), 0.15625, 0.01), "fill smooth: a quarter of the way in time, 16%% of the move (%.3f)" % _prog("armR", 2, 6, 0, 24))
+	ok(near(_prog("armR", 2, 12, 0, 24), 0.5, 0.01) and near(_prog("handR", 0, 12, 0, 24), 0.5, 0.01), "fill smooth: half way at the middle")
+	app.fill_apply({"from": 0, "to": 24, "timing": "strike"})
+	ok(app.doc.fills.size() == 1, "fill: filling the same span again replaces its fill")
+	ok(near(_prog("armR", 2, 6, 0, 24), 0.034, 0.01), "fill strike: slow start (%.3f)" % _prog("armR", 2, 6, 0, 24))
+	ok(_prog("armR", 2, 22, 0, 24) < 0.85, "fill strike: still coming in fast near B (%.3f)" % _prog("armR", 2, 22, 0, 24))
+	app.fill_apply({"from": 0, "to": 24, "timing": "settle"})
+	ok(near(_prog("armR", 2, 6, 0, 24), 0.522, 0.01), "fill settle: fast start (%.3f)" % _prog("armR", 2, 6, 0, 24))
+	app.fill_apply({"from": 0, "to": 24, "timing": "smooth", "overlap": 1.0})
+	var pt := _prog("torso", 0, 6, 0, 24)
+	var pa_ := _prog("armR", 2, 6, 0, 24)
+	var ph := _prog("handR", 0, 6, 0, 24)
+	ok(pt > pa_ and pa_ > ph and ph > 0.0, "fill overlap: the hand trails the arm, the arm trails the torso (%.3f > %.3f > %.3f)" % [pt, pa_, ph])
+	var ph22 := _prog("handR", 0, 22, 0, 24)
+	ok(ph22 > 0.9 and ph22 <= 1.0001, "fill overlap: the hand catches up by B (%.3f)" % ph22)
+	app.fill_apply({"from": 0, "to": 24, "overlap": 0.0, "anticipate": 1.0})
+	var back := INF
+	for f in range(2, 12, 2):
+		back = minf(back, _prog("armR", 2, f, 0, 24))
+	ok(back < -0.02, "fill anticipate: the arm winds back first (%.3f)" % back)
+	app.fill_apply({"from": 0, "to": 24, "anticipate": 0.0, "overshoot": 1.0})
+	var past := -INF
+	for f in range(12, 24, 2):
+		past = maxf(past, _prog("armR", 2, f, 0, 24))
+	ok(past > 1.02, "fill overshoot: the arm goes past B and settles onto it (%.3f)" % past)
+	ok(_fill_keys_ok() == "", "fill: every key it made is inside the limits %s" % _fill_keys_ok())
+	# a knee going nearly straight with overshoot never bends forward
+	var kb := pb.duplicate()
+	kb["kneeL"] = Vector3(0.05, 0, 0)
+	app.doc.write_key(24, kb, B)
+	app.doc.key_at(0)["rot"]["kneeL"] = [1.5, 0.0, 0.0]
+	app.fill_apply({"from": 0, "to": 24, "overshoot": 1.0})
+	ok(_fill_keys_ok() == "", "fill: overshoot never takes a knee past straight %s" % _fill_keys_ok())
+	# remove + undo
+	var id := str(app.doc.fills[0]["id"])
+	var n_hist: int = app.history.undo_stack.size()
+	ok(app.fill_remove(id) == 11, "fill remove: its 11 keys go")
+	ok(app.doc.key_frames() == [0, 24, 48] and str(app.doc.key_at(0).get("ease", "")) == "in", "fill remove: the keys around it and key A's ease are as they were")
+	app.undo()
+	ok(app.doc.fills.size() == 1 and app.doc.keys.size() == 14, "fill: undo brings it back")
+	ok(app.history.undo_stack.size() == n_hist, "fill remove: one undo step")
+	var round_doc := FSADoc.from_clip(app.doc.to_clip())
+	ok(round_doc.fills.size() == 1 and round_doc.keys.any(func(k: Dictionary) -> bool: return str(k.get("fill", "")) == id), "fill: saved and loaded, the fill and its keys are kept")
+	# a locked key in the way
+	app.doc.write_key(30, zero, B)
+	app.doc.key_at(30)["lock"] = true
+	var kf := app.doc.key_frames()
+	ok(app.fill_apply({"from": 24, "to": 48}).has("error") and app.doc.key_frames() == kf, "fill: a locked key in the span stops it, nothing changes")
+	# ---- flow: the speed coming into A carries on
+	app.new_clip("zz_fill_flow", 36, 60, false, false)
+	app.doc.keys = []
+	app.doc.write_key(0, zero, B)
+	var p12 := zero.duplicate()
+	p12["armR"] = Vector3(0, 0, 0.4)
+	app.doc.write_key(12, p12, B)
+	var p36 := zero.duplicate()
+	p36["armR"] = Vector3(0, 0, 1.2)
+	app.doc.write_key(36, p36, B)
+	app.doc.normalize()
+	var at := func(f: int) -> float: return (app.doc.base_pose(float(f), B)["armR"] as Vector3).z
+	app.fill_apply({"from": 12, "to": 36, "flow": 0.0, "overlap": 0.0})
+	var d0 := float(at.call(14)) - float(at.call(12))
+	app.fill_apply({"from": 12, "to": 36, "flow": 1.0})
+	var d1 := float(at.call(14)) - float(at.call(12))
+	ok(absf(d1 - 0.4 / 12.0 * 2.0) < 0.25 * 0.4 / 12.0 * 2.0 and d1 > 2.5 * d0, "fill flow: keeps the speed coming in (%.4f per 2 frames, coming in %.4f; no flow %.4f)" % [d1, 0.4 / 6.0, d0])
+	# ---- feet: a planted pose, the hips shift and turn, both feet stay put
+	app.new_clip("zz_fill_feet", 30, 60, false, false)
+	app.doc.plant = true
+	var pw := CBClipLib.pose_at(CBClipLib.load_clip("a_wait"), 0.0, B)
+	var pmoved := _feet_back(pw, {"_dx": 0.06, "_dy": -0.04, "hips": Vector3(0, 0.3, 0), "torso": Vector3(0.15, 0, 0)}, Vector3.ZERO)
+	app.doc.keys = []
+	app.doc.write_key(0, pw, B)
+	app.doc.write_key(30, pmoved, B)
+	app.doc.normalize()
+	app.fill_apply({"from": 0, "to": 30, "feet": false})
+	var drift_off := _feet_drift(30)
+	var rf := app.fill_apply({"from": 0, "to": 30, "feet": true})
+	var drift_on := _feet_drift(30)
+	ok(str((rf["feet"] as Dictionary).get("footL", "")) == "held" and str((rf["feet"] as Dictionary).get("footR", "")) == "held", "fill feet: both feet are held (%s)" % str(rf["feet"]))
+	ok(drift_on < 0.006 and drift_on < drift_off, "fill feet: the planted feet stay put (%.1f mm; %.1f mm without)" % [drift_on * 1000.0, drift_off * 1000.0])
+	ok(_fill_keys_ok() == "", "fill feet: the legs stay inside their limits %s" % _fill_keys_ok())
+	# a step: the right foot moves 15 cm forward and lifts on the way
+	var pstep := _feet_back(pw, {"_dz": 0.06}, Vector3(0, 0, 0.15))
+	app.doc.write_key(30, pstep, B)
+	var rs := app.fill_apply({"from": 0, "to": 30})
+	var sk := app.stage.probe_skel
+	var foot_y := func(f: int) -> float:
+		CBClipLib.apply_pose(sk, app.doc.base_pose(float(f), B))
+		sk.force_update_all_bone_transforms()
+		return (sk.global_transform * sk.get_bone_global_pose(sk.find_bone("footR")).origin).y
+	ok(str((rs["feet"] as Dictionary).get("footR", "")) == "step" and str((rs["feet"] as Dictionary).get("footL", "")) == "held", "fill feet: the right foot steps, the left is held (%s)" % str(rs["feet"]))
+	var lift := float(foot_y.call(16)) - maxf(float(foot_y.call(0)), float(foot_y.call(30)))
+	ok(lift > 0.025, "fill feet: the stepping foot lifts on the way (%.1f cm)" % (lift * 100.0))
+	# ---- a spin the keys ask for (the hips keyed past a full turn: Vix's forward smash) stays a spin, the planted foot pivots
+	app.open_clip("a_vix_fsmash", true)
+	app.doc.keys = app.doc.keys.filter(func(k: Dictionary) -> bool: return int(k["f"]) != 10 and int(k["f"]) != 12)
+	var rsp := app.fill_apply({"from": 8, "to": 22, "timing": "strike"})
+	var turn_ok := true
+	var last_y := -INF
+	for f in range(8, 23):
+		var hy := (app.doc.base_pose(float(f), B)["hips"] as Vector3).y
+		turn_ok = turn_ok and hy >= last_y - 1e-4
+		last_y = hy
+	ok(turn_ok and near(last_y, 6.58, 0.01), "fill spin: the hips keep turning the way the keys go, past a full turn (to %.2f rad)" % last_y)
+	# the keys themselves put the left foot somewhere else at f22 (the body swings round the hips): it steps there, off the floor
+	var path := []
+	for f in range(8, 23):
+		CBClipLib.apply_pose(sk, app.doc.base_pose(float(f), B))
+		sk.force_update_all_bone_transforms()
+		path.append(sk.global_transform * sk.get_bone_global_pose(sk.find_bone("footL")).origin)
+	var ends := [path[0], path[path.size() - 1]]
+	var lift_s := -INF   # above the straight line between where it starts and lands
+	for i in path.size():
+		lift_s = maxf(lift_s, (path[i] as Vector3).y - lerpf((ends[0] as Vector3).y, (ends[1] as Vector3).y, float(i) / float(path.size() - 1)))
+	var moved_s := Vector2((ends[1] as Vector3).x - (ends[0] as Vector3).x, (ends[1] as Vector3).z - (ends[0] as Vector3).z).length()
+	ok(str((rsp["feet"] as Dictionary).get("footL", "")) == "step" and lift_s > 0.025, "fill spin: the left foot, %.0f cm away by the keys' own end pose, steps there (lifts %.1f cm) instead of sliding" % [moved_s * 100.0, lift_s * 100.0])
+	ok(_fill_keys_ok() == "", "fill spin: inside the limits %s" % _fill_keys_ok())
+	# ---- library: a stretch of a clip is found again, and played back as it is
+	var x := CBClipLib.load_clip("a_al_fsmash")
+	var xa := CBClipLib.pose_at(x, 6.0, B)
+	var xb := CBClipLib.pose_at(x, 24.0, B)
+	app.new_clip("zz_fill_lib", 18, int(x["fps"]), false, false)
+	app.doc.keys = []
+	app.doc.write_key(0, xa, B)
+	app.doc.write_key(18, xb, B)
+	app.doc.normalize()
+	var t0 := Time.get_ticks_msec()
+	FSAFill.library_index(true)
+	var t_index := Time.get_ticks_msec() - t0
+	t0 = Time.get_ticks_msec()
+	var ms := app.fill_matches({"from": 0, "to": 18, "n": 10})
+	var t_search := Time.get_ticks_msec() - t0
+	print("  fill library: index %d clips in %d ms, search in %d ms" % [FSAFill.library_index().size(), t_index, t_search])
+	var pick := -1
+	for i in ms.size():
+		if str(ms[i]["clip"]) == "a_al_fsmash" and not bool(ms[i]["mirror"]):
+			pick = i
+	ok(not ms.is_empty() and float(ms[0]["cost"]) < 0.03, "fill library: the best match joins the two poses (%s)" % (str(ms[0]) if not ms.is_empty() else "none"))
+	ok(pick >= 0 and near(float(ms[pick]["from"]), 6.0, 0.6) and near(float(ms[pick]["to"]), 24.0, 0.6), "fill library: finds the stretch it came from, a_al_fsmash f6-f24 (%s)" % (str(ms[pick]) if pick >= 0 else "not found"))
+	if pick >= 0:
+		app.fill_apply({"from": 0, "to": 18, "engine": "library", "pick": pick})
+		var worst := 0.0
+		for f in range(2, 18, 2):
+			var got := app.doc.base_pose(float(f), B)
+			var want := CBClipLib.pose_at(x, 6.0 + float(f), B)
+			for b in FSAFill.MATCH:
+				worst = maxf(worst, (got[b] as Vector3).distance_to(FSARig.clamp_limits(str(b), want[b])))
+		ok(worst < 0.002, "fill library: the in-betweens are the clip's own frames (worst %.4f rad)" % worst)
+	app.doc.keys = []
+	app.doc.write_key(0, FSAFill.mirror_pose(xa, B), B)
+	app.doc.write_key(18, FSAFill.mirror_pose(xb, B), B)
+	app.doc.normalize()
+	var mm := app.fill_matches({"from": 0, "to": 18, "n": 10})
+	ok(mm.any(func(m: Dictionary) -> bool: return bool(m["mirror"]) and float(m["cost"]) < 0.03), "fill library: the same move on the other side is found mirrored")
 	app.open_clip(was, true)

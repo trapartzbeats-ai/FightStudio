@@ -6,6 +6,7 @@ import * as E from "./core/evalc.js";
 import { poseOfKey, newId } from "./core/doc.js";
 import { DEG, RAD, v3, dist3 } from "./core/clip.js";
 import * as A from "./core/adjust.js";
+import * as FL from "./core/fill.js";
 import * as M from "./core/merge.js";
 
 export const METHODS = {
@@ -26,6 +27,10 @@ export const METHODS = {
   show_panel: "{title}: bring a panel to the front (Merge, Adjust, Feet, Layers, Dope Sheet, Blend Lab, Clips, ...)",
   adjust: "{bone, x=0, y=0, z=0 (degrees, the TOTAL turn of this adjustment), scope: all|frame|range, frame? (scope frame; default current), from?, to? (scope range), ease=6, mirror=false} -> {layers}; all zero removes it",
   adjust_restore: "{id? | bone?} (neither = all adjustments) -> {restored}", adjustments: "{} -> [{id, bone, scope, start, end, turn (degrees), text}]",
+  fill: "{from?, to? (default: the keys around the current frame), engine: shape|library, timing: smooth|even|strike|settle, flow=0.6, overlap=0.3, anticipate=0, overshoot=0 (0..1), feet=true (planted feet held / stepped), air=0 (cm jump arc), step=0 (key every N frames, 0 = auto), pick=0 (library match)} -> {id, from, to, keys, engine, match, feet, settings}: the frames between two keys made for you; the same span again replaces its fill and keeps the settings you leave out",
+  fill_matches: "{from?, to?, n=5} -> [{clip, from, to, mirror, cost, score (0..100), frames (how long that change took there)}]: library stretches that join the two poses",
+  fill_remove: "{id? (none = every fill)} -> {removed (keys)}",
+  fills: "{} -> [{id, a, b, settings, match?, text}]",
   feet: "{planted? (sets the clip's plant flag first), step=1} -> {planted, soles {footL: {tilt0, ankle_cm}}, counts {flat, pivot, limit, sink, air}, frames [{f, footL: {state, low_cm, tilt}, footR}]}: how the feet stand in the match, per frame",
   set_constraint: "{id, ...}", remove_constraint: "{id}", freeze: "{bone, from?, to?, what?}", bake_to_keys: "{}", lock: "{bones, channels?}", unlock: "{bones}",
   list_sockets: "{}", add_marker: "{frame, name}",
@@ -216,6 +221,10 @@ export function makeApi(app) {
     adjust_restore: (p) => ({ restored: app.adjustRestore(String(p.id || ""), String(p.bone || ""), who) }),
     adjustments: () => A.adjustLayers(app.doc).map((l) => ({ id: l.id, bone: l.bone || "", scope: l.scope || "", start: l.start || 0, end: l.end ?? -1,
       turn: A.value(l).map((x) => Math.round(x * DEG * 100) / 100), text: A.describe(l) })),
+    fill: (p) => app.fillApply({ ...p }, who),
+    fill_matches: (p) => app.fillMatches(p),
+    fill_remove: (p) => ({ removed: app.fillRemove(String(p.id || ""), who) }),
+    fills: () => app.doc.fills.map((fl) => ({ ...structuredClone(fl), text: FL.describe(fl) })),
     feet: (p) => {
       if (p.planted !== undefined && !!p.planted !== app.doc.plant) app.setClipProp("plant", !!p.planted, who);
       return app.feetReport(Number(p.step || 1));

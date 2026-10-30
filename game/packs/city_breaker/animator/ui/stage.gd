@@ -245,6 +245,8 @@ func place_props(skel_ref: Skeleton3D, sock_specs: Dictionary) -> void:
 			var gl := Transform3D(Basis.from_euler(FSAEval._v3(pd.get("rot", [0, 0, 0])) * (PI / 180.0)), FSAEval._v3(pd.get("offset", [0, 0, 0])))
 			(mi as Node3D).visible = bool(pd.get("visible", true))
 			(mi as Node3D).global_transform = gt * gl
+			if bool(pd.get("wrap", true)):   # the fingers close round it until their skin meets it (CBGrip.wrap_hand)
+				CBGrip.wrap_hand(skel_ref, gk[1] if gk.size() > 1 else "R", gk[0], sz, gt * gl)
 			continue
 		var sp: Dictionary = sock_specs.get(str(pd.get("socket", "")), {})
 		var bi := skel_ref.find_bone(str(sp.get("bone", pd.get("bone", "handR"))))

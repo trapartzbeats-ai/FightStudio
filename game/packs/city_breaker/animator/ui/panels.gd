@@ -1151,6 +1151,198 @@ class Adjust extends VBoxContainer:
 			list.add_child(r)
 
 
+# ==================================================================== FILL
+
+## Fill (core/fill.gd): the frames between two keys made for you. Once a span is filled the knobs change it live.
+class Fill extends VBoxContainer:
+	var app: FSAApp
+	var span_lbl: Label
+	var use_range: CheckBox
+	var engine_opt: OptionButton
+	var shape_box := VBoxContainer.new()
+	var lib_box := VBoxContainer.new()
+	var timing_opt: OptionButton
+	var knobs := {}            # flow / overlap / anticipate / overshoot -> HSlider (percent)
+	var feet_chk: CheckBox
+	var air_spin: SpinBox
+	var step_spin: SpinBox
+	var found := ItemList.new()
+	var found_lbl: Label
+	var list := VBoxContainer.new()
+	var _matches: Array = []
+	var _span: Array = []      # the span the controls show
+	var _quiet := false
+
+	func setup(a: FSAApp) -> Control:
+		app = a
+		var body := FSATheme.scroll_body(self)
+		body.add_child(FSATheme.heading("Fill"))
+		body.add_child(FSATheme.hint("The frames between two keys, made for you. Put the playhead between two keys (or tick play range) and press FILL. SHAPE makes the move by the rules of good motion: it carries the speed through the keys (Flow), the hand trails the arm (Overlap), winds up first (Anticipate), goes past and settles (Overshoot). LIBRARY finds how your own clips make the same change and bends it onto your two keys. Every joint stays inside its natural range and planted feet stay put. The made keys are plain breakdown keys you can still edit; once filled, the knobs change it live."))
+		span_lbl = FSATheme.label("", FSATheme.GOLD, 14)
+		span_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		body.add_child(span_lbl)
+		engine_opt = FSATheme.option(["SHAPE (the rules)", "LIBRARY (your clips)"], 0, func(_i: int) -> void:
+			_show_engine()
+			if engine_opt.selected == 1 and _matches.is_empty():
+				_search()
+			_live(), "SHAPE: made by the rules of good motion. LIBRARY: taken from the clip that makes the same change, bent onto your keys")
+		use_range = FSATheme.check("play range", false, func(_on: bool) -> void: _refresh(), "Fill the IN / OUT play range instead of the keys around this frame")
+		FSATheme.row(body, [FSATheme.label("engine", FSATheme.MUTED, 12), engine_opt, use_range])
+		body.add_child(shape_box)
+		var names: Array = []
+		for t in FSAFill.TIMINGS:
+			names.append(str(FSAFill.TIMING_NAMES[t]))
+		timing_opt = FSATheme.option(names, 0, func(_i: int) -> void: _live(), "How the move spends its time between the two keys")
+		FSATheme.row(shape_box, [FSATheme.label("timing", FSATheme.MUTED, 12), timing_opt])
+		for k in [["flow", "Flow", "Carries the speed the motion has coming into the first key and going out of the last"],
+				["overlap", "Overlap", "Each joint trails the one it hangs from and catches up by the end: the hand after the arm, the tail after the hips"],
+				["anticipate", "Anticipate", "A small wind-up the other way before the move"],
+				["overshoot", "Overshoot", "Goes a little past the last pose and settles onto it"]]:
+			knobs[k[0]] = FSATheme.slider_row(shape_box, str(k[1]), 0, 100, 1, float(FSAFill.DEFAULTS[k[0]]) * 100.0, func(_v: float) -> void: _live(), str(k[2]))
+		body.add_child(lib_box)
+		found_lbl = FSATheme.label("", FSATheme.MUTED, 12)
+		found_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		found_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		FSATheme.row(lib_box, [FSATheme.button("SEARCH", func() -> void: _search(), "Look through every clip (mirrored too) for the stretch that best joins these two keys"), found_lbl])
+		found.custom_minimum_size.y = 110
+		found.item_selected.connect(func(_i: int) -> void: _live())
+		found.item_activated.connect(func(_i: int) -> void: _fill())
+		lib_box.add_child(found)
+		feet_chk = FSATheme.check("hold planted feet", true, func(_on: bool) -> void: _live(), "In a planted clip a foot standing at both keys stays where it stands; one that moved steps on an arc")
+		air_spin = FSATheme.spin(0, 200, 1, 0, func(_v: float) -> void: _live(), "The hips go up on a jump arc this high in the middle (0 = off)", "cm")
+		step_spin = FSATheme.spin(0, 12, 1, 0, func(_v: float) -> void: _live(), "A key every N frames (0: every 2 at 60 fps, every frame at 30)")
+		FSATheme.row(body, [feet_chk, FSATheme.label("air", FSATheme.MUTED, 12), air_spin])
+		FSATheme.row(body, [FSATheme.label("key every", FSATheme.MUTED, 12), step_spin, FSATheme.label("frames", FSATheme.MUTED, 12)])
+		FSATheme.row(body, [FSATheme.button("FILL", func() -> void: _fill(), "Make the frames between the two keys"),
+			FSATheme.button("REMOVE", func() -> void:
+				var fl := _fill_here()
+				if not fl.is_empty():
+					app.fill_remove(str(fl["id"])), "Take this span's fill out: the keys around it are as they were")])
+		FSATheme.sep(body)
+		body.add_child(FSATheme.label("Filled", FSATheme.GOLD, 14))
+		body.add_child(list)
+		app.changed.connect(func(w: String) -> void:
+			if w in ["doc", "clip", "fighter"]:
+				_list()
+				_refresh()
+			elif w == "frame" and not use_range.button_pressed:
+				_refresh())
+		_show_engine()
+		_list()
+		_refresh()
+		return self
+
+	func _show_engine() -> void:
+		shape_box.visible = engine_opt.selected == 0
+		lib_box.visible = engine_opt.selected == 1
+
+	func _current_span() -> Array:
+		if use_range.button_pressed:
+			var b := app.play_range.y if app.play_range.y >= 0 else app.doc.frames
+			return app.fill_span({"from": app.play_range.x, "to": b})
+		return app.fill_span()
+
+	func _fill_here() -> Dictionary:
+		return {} if _span.is_empty() else FSAFill.at_span(app.doc, int(_span[0]), int(_span[1]))
+
+	func _opts() -> Dictionary:
+		var o := {"engine": FSAFill.ENGINES[engine_opt.selected], "timing": FSAFill.TIMINGS[timing_opt.selected],
+			"feet": feet_chk.button_pressed, "air": air_spin.value, "step": int(step_spin.value)}
+		for k in knobs:
+			o[k] = (knobs[k] as HSlider).value / 100.0
+		var sel := found.get_selected_items()
+		o["pick"] = sel[0] if not sel.is_empty() else 0
+		if not _span.is_empty():
+			o["from"] = int(_span[0])
+			o["to"] = int(_span[1])
+		return o
+
+	## the span under the playhead; when it changes, the controls show that span's fill (if it has one)
+	func _refresh() -> void:
+		var sp := _current_span()
+		var changed_span := sp != _span
+		_span = sp
+		if sp.is_empty():
+			span_lbl.text = "Put the playhead between two keys (2 frames apart or more), or tick play range."
+			return
+		var fl := _fill_here()
+		span_lbl.text = "f%d -> f%d  (%d frames)   %s" % [int(sp[0]), int(sp[1]), int(sp[1]) - int(sp[0]),
+			("filled: " + FSAFill.describe(fl)) if not fl.is_empty() else "not filled"]
+		if changed_span:
+			_matches = []
+			found.clear()
+			found_lbl.text = "SEARCH to see which clips make this change."
+			if not fl.is_empty():
+				_load(fl["settings"])
+
+	func _load(s: Dictionary) -> void:
+		_quiet = true
+		engine_opt.select(maxi(0, FSAFill.ENGINES.find(str(s.get("engine", "shape")))))
+		timing_opt.select(maxi(0, FSAFill.TIMINGS.find(str(s.get("timing", "smooth")))))
+		for k in knobs:
+			FSATheme.set_quiet(knobs[k], float(s.get(k, FSAFill.DEFAULTS[k])) * 100.0)
+		feet_chk.set_pressed_no_signal(bool(s.get("feet", true)))
+		air_spin.set_value_no_signal(float(s.get("air", 0.0)))
+		step_spin.set_value_no_signal(float(s.get("step", 0)))
+		_show_engine()
+		_quiet = false
+
+	## a knob moved: a span that is already filled is filled again with it
+	func _live() -> void:
+		if _quiet or _fill_here().is_empty():
+			return
+		_fill()
+
+	func _fill() -> void:
+		if _span.is_empty():
+			app.say("Put the playhead between two keys first.", "warn")
+			return
+		if engine_opt.selected == 1 and _matches.is_empty():
+			_search()
+			if _matches.is_empty():
+				return
+		app.fill_apply(_opts())
+		_refresh()
+
+	func _search() -> void:
+		if _span.is_empty():
+			return
+		_matches = app.fill_matches({"from": int(_span[0]), "to": int(_span[1]), "n": 8})
+		found.clear()
+		for m in _matches:
+			found.add_item("%3d%%  %s  f%d-f%d%s   took %d frames" % [int(m["score"]), m["clip"], int(round(float(m["from"]))),
+				int(round(float(m["to"]))), "  mirrored" if bool(m["mirror"]) else "", int(m["frames"])])
+		if _matches.is_empty():
+			found_lbl.text = "No clip makes this change."
+			return
+		found.select(0)
+		var took := int(_matches[0]["frames"])
+		var have := int(_span[1]) - int(_span[0])
+		if int(_matches[0]["score"]) < 50:
+			found_lbl.text = "Weak: no clip makes quite this change (best %d%%). SHAPE may suit it better." % int(_matches[0]["score"])
+		elif absf(took - have) > 0.25 * have:
+			found_lbl.text = "Best: %s. It took %d frames there; this span has %d." % [_matches[0]["clip"], took, have]
+		else:
+			found_lbl.text = "Best: %s." % _matches[0]["clip"]
+
+	func _list() -> void:
+		for c in list.get_children():
+			c.queue_free()
+		if app.doc.fills.is_empty():
+			list.add_child(FSATheme.label("Nothing filled.", FSATheme.MUTED, 12))
+			return
+		for fl in app.doc.fills:
+			var fd: Dictionary = fl
+			var r := HBoxContainer.new()
+			var lb := FSATheme.label(FSAFill.describe(fd), FSATheme.TEXT, 13)
+			lb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			lb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			r.add_child(lb)
+			r.add_child(FSATheme.button("GO", func() -> void: app.set_frame(float(int(fd["a"]) + int(fd["b"])) * 0.5), "Put the playhead in this fill"))
+			r.add_child(FSATheme.button("REMOVE", func() -> void: app.fill_remove(str(fd["id"])), "Take this fill out"))
+			list.add_child(r)
+
+
 # ==================================================================== FEET
 
 ## the feet across the clip: one lane per foot, a cell per frame coloured by how it stands (FSAApp.feet_report); click a cell

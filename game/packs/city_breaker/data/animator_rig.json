@@ -25,7 +25,69 @@
       ],
       "max": 1.0,
       "min": 0.0,
-      "name": "Fist L"
+      "name": "Fist L",
+      "drives_fingered": [
+        [
+          "fingersL",
+          0,
+          -0.5453
+        ],
+        [
+          "fingersL",
+          1,
+          0.0256
+        ],
+        [
+          "fingersL",
+          2,
+          1.4095
+        ],
+        [
+          "tipsL",
+          0,
+          -0.6228
+        ],
+        [
+          "tipsL",
+          1,
+          0.1035
+        ],
+        [
+          "tipsL",
+          2,
+          1.6614
+        ],
+        [
+          "thumbL",
+          0,
+          0.6793
+        ],
+        [
+          "thumbL",
+          1,
+          0.7725
+        ],
+        [
+          "thumbL",
+          2,
+          0.4953
+        ],
+        [
+          "thumbL2",
+          0,
+          -0.3385
+        ],
+        [
+          "thumbL2",
+          1,
+          -0.1245
+        ],
+        [
+          "thumbL2",
+          2,
+          0.3564
+        ]
+      ]
     },
     {
       "drives": [
@@ -52,7 +114,69 @@
       ],
       "max": 1.0,
       "min": 0.0,
-      "name": "Fist R"
+      "name": "Fist R",
+      "drives_fingered": [
+        [
+          "fingersR",
+          0,
+          0.3719
+        ],
+        [
+          "fingersR",
+          1,
+          0.0413
+        ],
+        [
+          "fingersR",
+          2,
+          -1.4547
+        ],
+        [
+          "tipsR",
+          0,
+          0.401
+        ],
+        [
+          "tipsR",
+          1,
+          0.1218
+        ],
+        [
+          "tipsR",
+          2,
+          -1.7192
+        ],
+        [
+          "thumbR",
+          0,
+          0.3114
+        ],
+        [
+          "thumbR",
+          1,
+          -0.9556
+        ],
+        [
+          "thumbR",
+          2,
+          -0.0083
+        ],
+        [
+          "thumbR2",
+          0,
+          0.095
+        ],
+        [
+          "thumbR2",
+          1,
+          0.1581
+        ],
+        [
+          "thumbR2",
+          2,
+          -0.6518
+        ]
+      ]
     },
     {
       "drives": [
@@ -945,5 +1069,78 @@
     "kneeL",
     "kneeR"
   ],
-  "limits_note": "Joint limits in radians on the clip's Euler (Rz * Ry * Rx on the rest pose), checked on axis_probe sheets 2026-10-29: knee +X bends (never forward), elbow -X bends, foot +X points the toes down / -X lifts them (up to 40 degrees: a planted back foot in a deep stance), hand X bends the wrist forward/back, hand Y twists, hand Z bends it sideways (small), fingers: the curl axis differs between the plain rig v4 hands and the fingered (Mixamo-based) hands, so finger joints get one safe range on every axis (no finger joint past ~140 degrees: the user's own fist poses curl that far; thumbs ~80) until each rig's finger axes are probed. hinge: joints that only bend about X. Fight Studio's tools clamp to these; the Body Solve never turns a joint past them (a clip that already goes past keeps its own value, the solve just won't push further)."
+  "limits_note": "Joint limits in radians on the clip's Euler (Rz * Ry * Rx on the rest pose), checked on axis_probe sheets 2026-10-29: knee +X bends (never forward), elbow -X bends, foot +X points the toes down / -X lifts them (up to 40 degrees: a planted back foot in a deep stance), hand X bends the wrist forward/back, hand Y twists, hand Z bends it sideways (small), fingers: the curl axis differs between the plain rig v4 hands and the fingered (Mixamo-based) hands, so finger joints keep one wide euler range here (+-140 degrees, thumbs ~80); their REAL ranges are finger_limits, on each joint's own curl / spread / twist axes (2026-10-30). hinge: joints that only bend about X. Fight Studio's tools clamp to these; the Body Solve never turns a joint past them (a clip that already goes past keeps its own value, the solve just won't push further).",
+  "finger_limits": {
+    "knuckle": {
+      "curl": [
+        -20,
+        100
+      ],
+      "spread": [
+        -25,
+        25
+      ],
+      "twist": [
+        -15,
+        15
+      ]
+    },
+    "mid": {
+      "curl": [
+        -5,
+        115
+      ],
+      "spread": [
+        -10,
+        10
+      ],
+      "twist": [
+        -12,
+        12
+      ]
+    },
+    "end": {
+      "curl": [
+        -12,
+        95
+      ],
+      "spread": [
+        -10,
+        10
+      ],
+      "twist": [
+        -12,
+        12
+      ]
+    },
+    "thumb1": {
+      "curl": [
+        -35,
+        80
+      ],
+      "spread": [
+        -50,
+        50
+      ],
+      "twist": [
+        -50,
+        50
+      ]
+    },
+    "thumb2": {
+      "curl": [
+        -25,
+        95
+      ],
+      "spread": [
+        -20,
+        20
+      ],
+      "twist": [
+        -25,
+        25
+      ]
+    }
+  },
+  "finger_limits_note": "Degrees on each fighter's own finger axes (data/finger_frames.json from tools/finger_frames.gd): curl + = into the palm, spread + = toward the index, twist about the finger. 2026-10-30: the real fingers (the user's new Vix and Carter) showed the old shared fist bending index knuckles and end joints BACKWARDS; Fight Studio now clamps finger joints here (on top of the euler limits), and checks report a finger past its range. A little more curl than a stiff hinge: the middle joint closes to 115 so a fist shuts."
 }

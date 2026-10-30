@@ -33,6 +33,7 @@ var constraints: Array = []
 var locks: Dictionary = {}     # bone -> channels frozen ("x", "xz", "xyz")
 var markers: Array = []        # [{f, name}]
 var props: Array = []          # [{id, name, shape, socket, offset, rot, scale, color}]
+var fills: Array = []          # [{id, a, b, a_ease, settings, match?}] in-betweens made by Fill (core/fill.gd); their keys carry "fill": id
 var extra: Dictionary = {}     # every other field of the clip file, kept as it was (marks, ghosts, note, unbaked_from...)
 var baked_on := ""
 var outside_edit := false
@@ -67,6 +68,7 @@ static func from_clip(c: Dictionary) -> FSADoc:
 	d.locks = (st.get("locks", {}) as Dictionary).duplicate(true)
 	d.markers = (st.get("markers", []) as Array).duplicate(true)
 	d.props = (st.get("props", []) as Array).duplicate(true)
+	d.fills = (st.get("fills", []) as Array).duplicate(true)
 	d.baked_on = str(st.get("baked_on", ""))
 	d.saved = str(st.get("saved", ""))
 	if d.outside_edit:
@@ -92,7 +94,7 @@ func to_dict() -> Dictionary:
 	return {"name": name, "fps": fps, "frames": frames, "loop": loop, "override": override, "plant": plant, "ease": ease,
 		"keys": keys.duplicate(true), "layers": layers.duplicate(true), "constraints": constraints.duplicate(true),
 		"locks": locks.duplicate(true), "markers": markers.duplicate(true), "props": props.duplicate(true),
-		"extra": extra.duplicate(true), "baked_on": baked_on}
+		"fills": fills.duplicate(true), "extra": extra.duplicate(true), "baked_on": baked_on}
 
 
 func load_dict(d: Dictionary) -> void:
@@ -109,6 +111,7 @@ func load_dict(d: Dictionary) -> void:
 	locks = (d.get("locks", {}) as Dictionary).duplicate(true)
 	markers = (d.get("markers", []) as Array).duplicate(true)
 	props = (d.get("props", []) as Array).duplicate(true)
+	fills = (d.get("fills", []) as Array).duplicate(true)
 	extra = (d.get("extra", {}) as Dictionary).duplicate(true)
 	baked_on = str(d.get("baked_on", ""))
 	normalize()
@@ -136,6 +139,8 @@ func to_clip(baked: Array = []) -> Dictionary:
 		st["markers"] = markers.duplicate(true)
 	if not props.is_empty():
 		st["props"] = props.duplicate(true)
+	if not fills.is_empty():
+		st["fills"] = fills.duplicate(true)
 	if not layers.is_empty():
 		st["layers"] = layers.duplicate(true)
 	if not constraints.is_empty():

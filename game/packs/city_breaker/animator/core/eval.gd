@@ -217,11 +217,12 @@ static func read_back(skel: Skeleton3D, pose: Dictionary, touched: Dictionary) -
 			followers.append(int(i))
 		else:
 			leaders_first.append(int(i))
+	var fmap := CBClipLib.finger_map(skel)
 	for i in leaders_first + followers:
 		var bn := skel.get_bone_name(i)
 		var rest := skel.get_bone_rest(i)
 		var local := skel.get_bone_pose(i)
-		var e := (rest.basis.orthonormalized().inverse() * local.basis.orthonormalized()).get_euler(EULER_ORDER_ZYX)
+		var e := CBClipLib.clip_basis(fmap, bn, rest.basis.orthonormalized().inverse() * local.basis.orthonormalized()).get_euler(EULER_ORDER_ZYX)
 		if CBClipLib.FOLLOW.has(bn):
 			var fl: Array = CBClipLib.FOLLOW[bn]
 			e -= (out.get(str(fl[0]), Vector3.ZERO) as Vector3) * float(fl[1])

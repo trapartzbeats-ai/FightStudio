@@ -2,14 +2,17 @@
 // Every body stands at the origin facing +Z, so world space here = what the game calls the fighter's space.
 import * as THREE from "three";
 import { boneRot, rotQuat, eulerOf, FOLLOW } from "./clip.js";
+import { mapQuat, unmapQuat } from "./fingers.js";
 
 const _q = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _v = new THREE.Vector3();
 
 export class Body {
-  constructor(root) {
+  // fmap: the fighter's finger retarget (fingers.js fingerMapOf): finger turns in clips are on the shared hand
+  constructor(root, fmap = null) {
     this.root = root;
+    this.fmap = fmap;
     this.bones = new Map();
     this.rest = new Map();
     root.traverse((o) => {
@@ -37,7 +40,7 @@ export class Body {
   apply(pose) {
     for (const [n, b] of this.bones) {
       const r = this.rest.get(n);
-      b.quaternion.copy(r.q).multiply(rotQuat(boneRot(pose, n), _q));
+      b.quaternion.copy(r.q).multiply(mapQuat(this.fmap, n, boneRot(pose, n), _q));
       b.position.copy(r.p);
       b.scale.copy(r.s);
       if (n === "hips") b.position.add(_v.set(pose._dx || 0, pose._dy || 0, pose._dz || 0));
@@ -77,14 +80,14 @@ export class Body {
     const b = this.bones.get(n);
     const r = this.rest.get(n);
     _q.copy(r.q).invert().multiply(b.quaternion);
-    return eulerOf(_q);
+    return eulerOf(unmapQuat(this.fmap, n, _q));
   }
 
   setLocalEuler(n, e) {
     const b = this.bones.get(n);
     const r = this.rest.get(n);
     if (!b) return;
-    b.quaternion.copy(r.q).multiply(rotQuat(e, _q));
+    b.quaternion.copy(r.q).multiply(mapQuat(this.fmap, n, e, _q));
     b.updateMatrixWorld(true);
   }
 

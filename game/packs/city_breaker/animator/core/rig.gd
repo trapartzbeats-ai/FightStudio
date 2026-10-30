@@ -7,6 +7,8 @@ extends RefCounted
 ## data/animator_rig.json holds the controls and limits; it is written the first time with the defaults below, then it is yours.
 
 const DATA := "res://game/packs/city_breaker/data/animator_rig.json"
+## each fighter's finger axes (tools/finger_frames.gd): the finger limits are measured on them, not on the euler channels
+const FINGER_FRAMES := "res://game/packs/city_breaker/data/finger_frames.json"
 
 const GROUPS := [
 	["Body", ["root", "hips", "torso", "chest", "neck", "head"]],
@@ -86,6 +88,9 @@ const DEFAULT_CONTROLS := [
 
 static var _data: Dictionary = {}
 static var _mirror_re: RegEx
+static var _finger_all: Dictionary = {}
+static var _fingers: Dictionary = {}       ## finger joint frames the limits use (the shared hand): bone -> {kind, c, s, t}
+static var fighter := ""
 
 
 static func data(force: bool = false) -> Dictionary:
@@ -203,18 +208,75 @@ static func hint(b: String) -> String:
 	return "X / Y / Z turn the bone about its own axes"
 
 
-## clamp a bone rotation to the rig limits
+## clamp a bone rotation to the rig limits (a finger joint that follows no other also to its natural range; a follower's
+## range is on its TOTAL turn, see clamp_finger)
 static func clamp_limits(b: String, e: Vector3) -> Vector3:
 	var lim: Dictionary = limits().get(b, {})
-	if lim.is_empty():
-		return e
 	var out := e
 	for i in 3:
 		var ax: String = ["x", "y", "z"][i]
 		if lim.has(ax):
 			var r: Array = lim[ax]
 			out[i] = clampf(out[i], float(r[0]), float(r[1]))
+	if _fingers.has(b) and not CBClipLib.FOLLOW.has(b):
+		out = clamp_finger(b, out)
 	return out
+
+
+## the fighter being posed: fingered fighters get the finger limits (their clips keep finger turns on the shared hand,
+## CBClipLib's finger retarget); plain rig v4 hands do not (Fight Studio calls it whenever a model is bound)
+static func use_fighter(k: String) -> void:
+	fighter = k
+	if _finger_all.is_empty() and FileAccess.file_exists(FINGER_FRAMES):
+		var p: Variant = JSON.parse_string(FileAccess.get_file_as_string(FINGER_FRAMES))
+		_finger_all = p if p is Dictionary else {}
+	_fingers = _finger_all.get("shared", {}) if (_finger_all.get("hands", {}) as Dictionary).has(k) else {}
+
+
+static func is_finger(b: String) -> bool:
+	return _fingers.has(b)
+
+
+## does a finger joint's TOTAL turn (own + what it follows) leave its natural range?
+static func finger_breaks(b: String, total: Vector3) -> bool:
+	return _fingers.has(b) and clamp_finger(b, total).distance_to(total) > 0.01
+
+
+## a finger joint's rotation as (curl into the palm, spread toward the index, twist) in radians, on the shared hand's axes;
+## Vector3.INF when the bone has no finger frame
+static func finger_parts(b: String, e: Vector3) -> Vector3:
+	var fr: Dictionary = _fingers.get(b, {})
+	if fr.is_empty():
+		return Vector3.INF
+	var q := Quaternion(CBClipLib.rot_basis(e)).normalized()
+	if q.w < 0.0:
+		q = -q
+	var ang := q.get_angle()
+	var rv := q.get_axis() * ang if ang > 1e-6 else Vector3.ZERO
+	return Vector3(rv.dot(_vec(fr["c"])), rv.dot(_vec(fr["s"])), rv.dot(_vec(fr["t"])))
+
+
+## keep a finger joint inside animator_rig.json finger_limits (degrees) on its own axes
+static func clamp_finger(b: String, e: Vector3) -> Vector3:
+	var fr: Dictionary = _fingers.get(b, {})
+	var lim: Dictionary = (data().get("finger_limits", {}) as Dictionary).get(str(fr.get("kind", "")), {})
+	if lim.is_empty():
+		return e
+	var parts := finger_parts(b, e)
+	var cl := parts
+	for i in 3:
+		var r: Array = lim.get(["curl", "spread", "twist"][i], [-180, 180])
+		cl[i] = clampf(parts[i], deg_to_rad(float(r[0])), deg_to_rad(float(r[1])))
+	if cl.distance_to(parts) < 1e-4:
+		return e
+	var rv := _vec(fr["c"]) * cl.x + _vec(fr["s"]) * cl.y + _vec(fr["t"]) * cl.z
+	if rv.length() < 1e-6:
+		return Vector3.ZERO
+	return Basis(rv.normalized(), rv.length()).get_euler(EULER_ORDER_ZYX)
+
+
+static func _vec(a: Array) -> Vector3:
+	return Vector3(float(a[0]), float(a[1]), float(a[2]))
 
 
 ## does a rotation break the rig limits (by more than a hair)?
@@ -240,10 +302,18 @@ static func limb_of(b: String) -> String:
 # ---------------------------------------------------------------- controls
 
 ## the value a control reads from a pose: the least-squares fit of value * amount to the channels it drives
+## a control's drives for the fighter being posed: a fingered hand curls on its own axes (drives_fingered: the fist's
+## numbers on the shared hand), a plain rig v4 hand on X
+static func drives(ctl: Dictionary) -> Array:
+	if not _fingers.is_empty() and ctl.has("drives_fingered"):
+		return ctl["drives_fingered"] as Array
+	return ctl.get("drives", []) as Array
+
+
 static func control_value(ctl: Dictionary, pose: Dictionary) -> float:
 	var num := 0.0
 	var den := 0.0
-	for d in (ctl.get("drives", []) as Array):
+	for d in drives(ctl):
 		var amt := float(d[2])
 		num += amt * _chan(pose, str(d[0]), d[1])
 		den += amt * amt
@@ -256,7 +326,7 @@ static func control_value(ctl: Dictionary, pose: Dictionary) -> float:
 static func set_control(ctl: Dictionary, pose: Dictionary, value: float) -> Dictionary:
 	var out := pose.duplicate()
 	var cur := control_value(ctl, pose)
-	for d in (ctl.get("drives", []) as Array):
+	for d in drives(ctl):
 		var amt := float(d[2])
 		var bone := str(d[0])
 		_set_chan(out, bone, d[1], _chan(out, bone, d[1]) + (value - cur) * amt)

@@ -168,6 +168,8 @@ static func others_for(f: CBFighter) -> Array:
 		var of := o as CBFighter
 		if of == f or of == null or not of.alive or of.anim == null:
 			continue
+		if not of.is_visible_in_tree():   # hidden (an ultimate's cut keeps them parked off-camera): nothing to bump into
+			continue
 		if f.catch_target == of or of.catch_target == f:
 			continue
 		out.append_array(of.anim.wrap_caps)

@@ -178,6 +178,44 @@ def studio_feet(planted: bool | None = None, step: int = 1, frames: bool = False
 
 
 @mcp.tool()
+def studio_fill(start: int | None = None, end: int | None = None, engine: str = "", timing: str = "", flow: float | None = None,
+                overlap: float | None = None, anticipate: float | None = None, overshoot: float | None = None,
+                feet: bool | None = None, air: float | None = None, step: int | None = None, pick: int | None = None) -> dict:
+    """Make the frames between two keys (the Fill panel). start / end = the span (default: the keys around the current
+    frame). engine "shape" (the rules): timing smooth | even | strike (slow start, hits the end fast) | settle (fast start,
+    eases in); flow 0..1 carries the speed coming into the first key and leaving the last; overlap 0..1 each joint trails
+    its parent and catches up (hand after arm, tail after hips); anticipate 0..1 winds up the other way first; overshoot
+    0..1 goes past the end pose and settles. engine "library": the stretch of one of our clips (mirrored too) that best joins
+    the two poses, bent onto them; pick = which match (studio_fill_matches lists them). feet (planted clips): a foot standing
+    at both keys stays put, one that moved steps on an arc. air = cm jump arc for the hips. step = a key every N frames.
+    Joints stay inside their limits. Filling the same span again replaces its fill and keeps what you leave out.
+    The made keys are plain "breakdown" keys; studio_fill_remove takes them out again."""
+    p = _clean({"engine": engine or None, "timing": timing or None, "flow": flow, "overlap": overlap, "anticipate": anticipate,
+                "overshoot": overshoot, "feet": feet, "air": air, "step": step, "pick": pick})
+    if start is not None and end is not None:
+        p["from"] = start
+        p["to"] = end
+    return rpc("fill", p)
+
+
+@mcp.tool()
+def studio_fill_matches(start: int | None = None, end: int | None = None, n: int = 5) -> list:
+    """Which of our clips make the same change as the two keys (start / end, default: around the current frame): clip, the
+    stretch (from / to, its frames), mirror, score 0..100 and how many frames that change took there (a length hint)."""
+    p: dict = {"n": n}
+    if start is not None and end is not None:
+        p["from"] = start
+        p["to"] = end
+    return rpc("fill_matches", p)
+
+
+@mcp.tool()
+def studio_fill_remove(id: str = "") -> dict:
+    """Take a fill out (its keys go, the keys around it are as they were); no id = every fill. studio_call("fills") lists them."""
+    return rpc("fill_remove", {"id": id})
+
+
+@mcp.tool()
 def studio_adjust_restore(bone: str = "", id: str = "") -> dict:
     """Take adjustments off (the keys are as they were): one by id, every one on a bone, or all of them (no arguments).
     studio_call("adjustments") lists them."""

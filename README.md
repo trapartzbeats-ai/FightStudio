@@ -48,6 +48,9 @@ godot --path . res://game/packs/city_breaker/animator/animator.tscn  [-- --fight
 - **Blend Lab**: transitions from one clip into another.
 - **Merge**: one animation built from several.
 - **Adjust**: tilt one part across the whole clip.
+- **Fill**: the frames between two keys, made for you: by the rules of good motion (timing, flow, overlap, anticipation,
+  overshoot) or from how your own clips make the same change. Joints stay in their limits, planted feet stay put or step,
+  keyed spins stay spins.
 - **Feet**: stand on the real soles.
 - **Motion import**: bring Mixamo motion onto the rig.
 
@@ -69,7 +72,7 @@ The full manual is `game/packs/city_breaker/animator/README.md`.
 
 ## Fight Studio Desktop (Electron)
 
-**Install (Windows 10 / 11, 64-bit):** download `FightStudioDesktop-Setup-1.1.0.exe` from the
+**Install (Windows 10 / 11, 64-bit):** download `FightStudioDesktop-Setup-1.2.0.exe` from the
 [Releases](https://github.com/trapartzbeats-ai/FightStudio/releases) page and run it.
 - On first start it asks for the game project folder: the Godot project with `game/packs/city_breaker` in it. File > Choose
   the game project folder changes it later.
@@ -81,13 +84,13 @@ The full manual is `game/packs/city_breaker/animator/README.md`.
 cd desktop
 npm install
 npm start            # -- --fighter=carter --clip=a_jab1 --project=<your Godot project>
-npm run selftest     # 91 checks
+npm run selftest     # 116 checks
 npm run dist         # builds dist/FightStudioDesktop-Setup-<version>.exe
 ```
 
 - Same file format, interpolation, rules and bake signature as the Godot app.
-- The same tools too: Adjust, Merge, Feet (real soles, matched to the game's `CBFeet` within 2 mm), Mixamo motion import
-  (matched limb by limb to the Godot import) and grip proxies.
+- The same tools too: Adjust, Merge, Fill (its keys match the Godot app's), Feet (real soles, matched to the game's `CBFeet`
+  within 2 mm), Mixamo motion import (matched limb by limb to the Godot import), real finger limits and grip proxies.
 - Loads fighters straight from the game's GLBs.
 - Agent API on `:47651`.
 - File access is limited to the project's clip, pose and data folders. Backups, trash and renders go to
@@ -105,6 +108,7 @@ It finds whichever app is running (`:47650` or `:47651`, or `FIGHT_STUDIO_URL`).
 - `get_pose` / `set_pose` (degrees), `ik_pose`, `key`, `keys`, `frames`
 - `controls`, `layers`, `constraints`, `freeze`, `lock`, `sockets`
 - `screenshot` (the four-angle review sheet), `checks`, `transition`, `undo`, `bake_glb`
+- `import_motion`, `merge`, `adjust`, `feet`, `fill`, `fill_matches`, `fill_remove`
 
 ## RMT Wrap: the Collision Wrap
 

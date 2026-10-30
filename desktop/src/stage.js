@@ -6,6 +6,7 @@ import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
 import { Body } from "./core/body.js";
 import { v3 } from "./core/clip.js";
 import * as G from "./core/grip.js";
+import { fingerMapOf } from "./core/fingers.js";
 
 export const SKY = 0x2a2430;
 
@@ -80,11 +81,12 @@ export class Stage {
       }
     });
     this.scene.add(this.model);
-    this.body = new Body(this.model);
-    this.probe = new Body(SkeletonUtils.clone(this.source));
+    const fmap = fingerMapOf(key);   // finger turns in clips are on the shared hand: each body turns them onto this fighter's
+    this.body = new Body(this.model, fmap);
+    this.probe = new Body(SkeletonUtils.clone(this.source), fmap);
     this.stripModel = SkeletonUtils.clone(this.source);
     this.stripScene.add(this.stripModel);
-    this.stripBody = new Body(this.stripModel);
+    this.stripBody = new Body(this.stripModel, fmap);
     this.body.apply({});
     this.probe.apply({});
     this.restFeet = {};
@@ -118,7 +120,7 @@ export class Stage {
       const mat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, opacity: 0.3, color: 0x66aaff });
       root.traverse((x) => { if (x.isMesh) { x.material = mat; x.castShadow = false; x.receiveShadow = false; x.frustumCulled = false; } });
       this.scene.add(root);
-      this.ghosts.push({ root, body: new Body(root), mat });
+      this.ghosts.push({ root, body: new Body(root, fingerMapOf(this.key)), mat });
     }
     while (this.ghosts.length > want) this.scene.remove(this.ghosts.pop().root);
     if (!want) return;
@@ -164,9 +166,11 @@ export class Stage {
         const size = v3(p.size || G.PROXY_SIZES[p.shape] || [0.1, 0.1, 0.1]);
         const r = v3(p.rot).map((x) => (x * Math.PI) / 180);
         const local = new THREE.Matrix4().compose(new THREE.Vector3(...v3(p.offset)), new THREE.Quaternion().setFromEuler(new THREE.Euler(r[0], r[1], r[2], "YXZ")), new THREE.Vector3(1, 1, 1));
-        G.frame(app.stage.body, side || "R", kind, size).multiply(local).decompose(mesh.position, mesh.quaternion, mesh.scale);
+        const at = G.frame(app.stage.body, side || "R", kind, size).multiply(local);
+        at.decompose(mesh.position, mesh.quaternion, mesh.scale);
         mesh.scale.multiplyScalar(Number(p.scale ?? 1));
         mesh.visible = p.visible !== false;
+        if (p.wrap !== false) G.wrapHand(app.stage.body, side || "R", kind, size, at);   // the fingers close round it till their skin meets it
         return;
       }
       const sp = app.sockSpecs[p.socket] || { bone: p.bone || "handR" };

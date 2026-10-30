@@ -8,6 +8,7 @@ import { PROP_SHAPES } from "./stage.js";
 import { renderPicture } from "./views.js";
 import * as A from "./core/adjust.js";
 import * as M from "./core/merge.js";
+import * as FL from "./core/fill.js";
 
 // the MCP server ships with the game project's animator (game/packs/city_breaker/animator/mcp)
 let MCP = "game/packs/city_breaker/animator/mcp/fight_studio_mcp.py";
@@ -507,6 +508,128 @@ export function Adjust(app) {
     if (["sel", "clip", "fighter", "doc"].includes(w) || (w === "frame" && scopeSel.value === "frame")) { showBone(); load(); }
   });
   fill(); list(); showBone(); load();
+  return el;
+}
+
+// ==================================================================== FILL
+// Fill (core/fill.js): the frames between two keys made for you. Once a span is filled the knobs change it live.
+export function Fill(app) {
+  const el = body();
+  let quiet = false, span = [], matches = [], busy = false, again = false;
+  const spanLbl = h("div", { class: "txt", style: "color:var(--gold);margin:4px 0" });
+  const useRange = check("play range", false, () => refresh(), "Fill the IN / OUT play range instead of the keys around this frame");
+  const rangeOn = () => useRange.querySelector("input").checked;
+  const engineSel = select([["shape", "SHAPE (the rules)"], ["library", "LIBRARY (your clips)"]], "shape", () => {
+    showEngine();
+    if (engineSel.value === "library" && !matches.length) search().then(live);
+    else live();
+  }, "SHAPE: made by the rules of good motion. LIBRARY: taken from the clip that makes the same change, bent onto your keys");
+  const timingSel = select(FL.TIMINGS.map((t) => [t, FL.TIMING_NAMES[t]]), "smooth", () => live(), "How the move spends its time between the two keys");
+  const knobs = {};
+  const shapeBox = h("div"), libBox = h("div");
+  shapeBox.append(row(label("timing"), timingSel));
+  for (const [k, name, tip] of [["flow", "Flow", "Carries the speed the motion has coming into the first key and going out of the last"],
+    ["overlap", "Overlap", "Each joint trails the one it hangs from and catches up by the end: the hand after the arm, the tail after the hips"],
+    ["anticipate", "Anticipate", "A small wind-up the other way before the move"],
+    ["overshoot", "Overshoot", "Goes a little past the last pose and settles onto it"]]) {
+    knobs[k] = slider(name, 0, 100, 1, FL.DEFAULTS[k] * 100, () => live(), { title: tip });
+    shapeBox.append(knobs[k].el);
+  }
+  const foundLbl = h("span", { class: "hint", style: "flex:1" });
+  const found = list(() => live(), () => doFill());
+  found.el.style.minHeight = "110px";
+  libBox.append(row(button("SEARCH", () => search(), "Look through every clip (mirrored too) for the stretch that best joins these two keys"), foundLbl), found.el);
+  const feetChk = check("hold planted feet", true, () => live(), "In a planted clip a foot standing at both keys stays where it stands; one that moved steps on an arc");
+  const feetOn = () => feetChk.querySelector("input").checked;
+  const airIn = num(0, () => live(), { min: 0, max: 200, title: "The hips go up on a jump arc this high in the middle (0 = off)" });
+  const stepIn = num(0, () => live(), { min: 0, max: 12, width: 56, title: "A key every N frames (0: every 2 at 60 fps, every frame at 30)" });
+  const listBox = h("div");
+  el.append(heading("Fill"), hint("The frames between two keys, made for you. Put the playhead between two keys (or tick play range) and press FILL. SHAPE makes the move by the rules of good motion: it carries the speed through the keys (Flow), the hand trails the arm (Overlap), winds up first (Anticipate), goes past and settles (Overshoot). LIBRARY finds how your own clips make the same change and bends it onto your two keys. Every joint stays inside its natural range and planted feet stay put. The made keys are plain breakdown keys you can still edit; once filled, the knobs change it live."),
+    spanLbl, row(label("engine"), engineSel, useRange), shapeBox, libBox,
+    row(feetChk, label("air"), airIn, label("cm")), row(label("key every"), stepIn, label("frames")),
+    row(button("FILL", () => doFill(), "Make the frames between the two keys"),
+      button("REMOVE", () => { const fl = here(); if (fl) app.fillRemove(fl.id); }, "Take this span's fill out: the keys around it are as they were")),
+    h("hr"), heading("Filled"), listBox);
+
+  const showEngine = () => { shapeBox.style.display = engineSel.value === "shape" ? "" : "none"; libBox.style.display = engineSel.value === "library" ? "" : "none"; };
+  const currentSpan = () => {
+    if (!rangeOn()) return app.fillSpan();
+    const [a, b] = app.playRangeFrames();
+    return app.fillSpan({ from: a, to: b });
+  };
+  const here = () => (span.length ? FL.atSpan(app.doc, span[0], span[1]) : null);
+  function opts() {
+    const o = { engine: engineSel.value, timing: timingSel.value, feet: feetOn(), air: Number(airIn.value), step: Number(stepIn.value), pick: Math.max(0, found.selected()) };
+    for (const k in knobs) o[k] = Number(knobs[k].r.value) / 100;
+    if (span.length) { o.from = span[0]; o.to = span[1]; }
+    return o;
+  }
+  // the span under the playhead; when it changes, the controls show that span's fill (if it has one)
+  function refresh() {
+    const sp = currentSpan();
+    const changed = sp.join() !== span.join();
+    span = sp;
+    if (!sp.length) { spanLbl.textContent = "Put the playhead between two keys (2 frames apart or more), or tick play range."; return; }
+    const fl = here();
+    spanLbl.textContent = `f${sp[0]} -> f${sp[1]}  (${sp[1] - sp[0]} frames)   ${fl ? "filled: " + FL.describe(fl) : "not filled"}`;
+    if (changed) {
+      matches = [];
+      found.set([]);
+      foundLbl.textContent = "SEARCH to see which clips make this change.";
+      if (fl) load(fl.settings);
+    }
+  }
+  function load(s) {
+    quiet = true;
+    engineSel.value = s.engine || "shape";
+    timingSel.value = s.timing || "smooth";
+    for (const k in knobs) knobs[k].set(Number(s[k] ?? FL.DEFAULTS[k]) * 100);
+    feetChk.querySelector("input").checked = s.feet !== false;
+    airIn.value = Number(s.air || 0);
+    stepIn.value = Number(s.step || 0);
+    showEngine();
+    quiet = false;
+  }
+  // a knob moved: a span that is already filled is filled again with it (one fill at a time; the last change wins)
+  function live() {
+    if (quiet || !here()) return;
+    doFill();
+  }
+  async function doFill() {
+    if (!span.length) { app.say("Put the playhead between two keys first.", "warn"); return; }
+    if (busy) { again = true; return; }
+    busy = true;
+    try {
+      if (engineSel.value === "library" && !matches.length) { await search(); if (!matches.length) return; }
+      await app.fillApply(opts());
+    } finally {
+      busy = false;
+    }
+    refresh();
+    if (again) { again = false; doFill(); }
+  }
+  async function search() {
+    if (!span.length) return;
+    foundLbl.textContent = "Searching your clips...";
+    matches = await app.fillMatches({ from: span[0], to: span[1], n: 8 });
+    found.set(matches.map((m) => `${String(m.score).padStart(3)}%  ${m.clip}  f${Math.round(m.from)}-f${Math.round(m.to)}${m.mirror ? "  mirrored" : ""}   took ${m.frames} frames`), matches.length ? 0 : -1);
+    if (!matches.length) { foundLbl.textContent = "No clip makes this change."; return; }
+    const took = matches[0].frames, have = span[1] - span[0];
+    foundLbl.textContent = matches[0].score < 50 ? `Weak: no clip makes quite this change (best ${matches[0].score}%). SHAPE may suit it better.`
+      : Math.abs(took - have) > 0.25 * have ? `Best: ${matches[0].clip}. It took ${took} frames there; this span has ${have}.` : `Best: ${matches[0].clip}.`;
+  }
+  function fillList() {
+    listBox.innerHTML = "";
+    if (!app.doc.fills.length) return listBox.append(hint("Nothing filled."));
+    for (const fl of app.doc.fills) listBox.append(row(h("span", { class: "txt", style: "flex:1" }, FL.describe(fl)),
+      button("GO", () => app.setFrame((fl.a + fl.b) / 2), "Put the playhead in this fill"),
+      button("REMOVE", () => app.fillRemove(fl.id), "Take this fill out")));
+  }
+  app.on((w) => {
+    if (["doc", "clip", "fighter"].includes(w)) { fillList(); refresh(); }
+    else if (w === "frame" && !rangeOn()) refresh();
+  });
+  showEngine(); fillList(); refresh();
   return el;
 }
 
