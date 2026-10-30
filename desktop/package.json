@@ -1,0 +1,20 @@
+{
+  "name": "fight-studio-desktop",
+  "productName": "Fight Studio Desktop",
+  "version": "1.0.0",
+  "description": "Fight Studio animation app (Electron + three.js) for City Breaker / BSP Universe clips, with an agent API for MCP.",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "selftest": "electron . --selftest --hidden"
+  },
+  "author": "RMT (Ro Made That)",
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "electron": "43.4.1"
+  },
+  "dependencies": {
+    "three": "0.160.0"
+  }
+}

@@ -1,0 +1,183 @@
+// The 3D world: the review-sheet look (plum sky, lavender floor with an orange 0.5 m grid, warm horizon), the fighter loaded
+// straight from the game's GLB, a probe body (math only), onion-skin ghosts, props on sockets, and a second scene for the strip.
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
+import { Body } from "./core/body.js";
+import { v3 } from "./core/clip.js";
+
+export const SKY = 0x2a2430;
+
+export function makeFloorMaterial() {
+  const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.92, metalness: 0 });
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec3 vWp;")
+      .replace("#include <project_vertex>", "#include <project_vertex>\nvWp = (modelMatrix * vec4(transformed, 1.0)).xyz;");
+    sh.fragmentShader = sh.fragmentShader
+      .replace("#include <common>", "#include <common>\nvarying vec3 vWp;")
+      .replace("#include <color_fragment>", `#include <color_fragment>
+      {
+        vec2 g = abs(fract(vWp.xz * 2.0 + 0.5) - 0.5) / fwidth(vWp.xz * 2.0);
+        float line = 1.0 - clamp(min(g.x, g.y), 0.0, 1.0);
+        vec2 g1 = abs(fract(vWp.xz * 0.5 + 0.5) - 0.5) / fwidth(vWp.xz * 0.5);
+        float major = 1.0 - clamp(min(g1.x, g1.y), 0.0, 1.0);
+        diffuseColor.rgb = mix(vec3(0.33, 0.31, 0.38), vec3(0.95, 0.6, 0.25), max(line * 0.6, major));
+      }`);
+  };
+  return m;
+}
+
+export function dressScene(scene) {
+  scene.background = new THREE.Color(SKY);
+  scene.fog = new THREE.Fog(0xf2c58e, 16, 95);
+  const hemi = new THREE.HemisphereLight(0xd9d6e6, 0x6b5f78, 1.35);
+  scene.add(hemi);
+  const sun = new THREE.DirectionalLight(0xfff4e6, 2.4);
+  sun.position.set(-3.5, 6.5, 4.5);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  Object.assign(sun.shadow.camera, { left: -4, right: 4, top: 4, bottom: -4, near: 0.5, far: 25 });
+  sun.shadow.bias = -0.0006;
+  sun.shadow.normalBias = 0.02;
+  scene.add(sun);
+  scene.add(sun.target);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), makeFloorMaterial());
+  floor.rotation.x = -Math.PI / 2;
+  floor.receiveShadow = true;
+  scene.add(floor);
+  return { sun, floor };
+}
+
+const loader = new GLTFLoader();
+
+export class Stage {
+  constructor() {
+    this.scene = new THREE.Scene();
+    dressScene(this.scene);
+    this.stripScene = new THREE.Scene();
+    dressScene(this.stripScene);
+    this.ghosts = [];
+    this.props = new THREE.Group();
+    this.scene.add(this.props);
+    this.height = 1.8;
+  }
+
+  async loadFighter(url, key) {
+    const gltf = await new Promise((res, rej) => loader.load(url, res, undefined, rej));
+    for (const old of [this.model, this.stripModel]) if (old) old.parent.remove(old);
+    for (const g of this.ghosts) this.scene.remove(g.root);
+    this.ghosts = [];
+    this.source = gltf.scene;
+    this.key = key;
+    this.model = gltf.scene;
+    this.model.traverse((o) => {
+      if (o.isMesh) {
+        o.castShadow = true;
+        o.receiveShadow = true;
+        o.frustumCulled = false;
+      }
+    });
+    this.scene.add(this.model);
+    this.body = new Body(this.model);
+    this.probe = new Body(SkeletonUtils.clone(this.source));
+    this.stripModel = SkeletonUtils.clone(this.source);
+    this.stripScene.add(this.stripModel);
+    this.stripBody = new Body(this.stripModel);
+    this.body.apply({});
+    this.probe.apply({});
+    this.restFeet = {};
+    for (const n of ["footL", "footR"]) if (this.probe.has(n)) this.restFeet[n] = this.probe.worldQuat(n);
+    // skinned meshes report their bind-space box, so measure the body by its head bone
+    this.height = this.body.has("head") ? Math.max(1, this.body.worldPos("head").y * 1.25) : Math.max(1, new THREE.Box3().setFromObject(this.model).max.y);
+    this.cloneCount = 0;
+  }
+
+  // the game's plant: raise / lower so the lower foot stands on the floor, feet flat like CBAnim.flat_feet
+  plant(ankle) {
+    const b = this.body;
+    if (!b.has("footL") || !b.has("footR")) return;
+    const lo = Math.min(b.worldPos("footL").y, b.worldPos("footR").y);
+    this.model.position.y = ankle - lo;
+    b.update();
+    const ys = { footL: b.worldPos("footL").y, footR: b.worldPos("footR").y };
+    const low = Math.min(ys.footL, ys.footR);
+    for (const n of ["footL", "footR"]) {
+      const k = Math.min(1, Math.max(0, 1 - (ys[n] - low) / 0.12));
+      if (k > 0 && this.restFeet[n]) b.setWorldQuat(n, this.restFeet[n], k);
+    }
+  }
+
+  // onion skin: ghosts of the frames before (blue) and after (orange)
+  updateOnion(app) {
+    const o = app.onion;
+    const want = o.on ? o.before + o.after : 0;
+    while (this.ghosts.length < want) {
+      const root = SkeletonUtils.clone(this.source);
+      const mat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, opacity: 0.3, color: 0x66aaff });
+      root.traverse((x) => { if (x.isMesh) { x.material = mat; x.castShadow = false; x.receiveShadow = false; x.frustumCulled = false; } });
+      this.scene.add(root);
+      this.ghosts.push({ root, body: new Body(root), mat });
+    }
+    while (this.ghosts.length > want) this.scene.remove(this.ghosts.pop().root);
+    if (!want) return;
+    const fs = [];
+    if (o.keys) {
+      let f = app.frame;
+      for (let i = 0; i < o.before; i++) { const k = app.doc.prevKey(f); fs.push(k); f = k < 0 ? -1 : k; }
+      f = app.frame;
+      for (let i = 0; i < o.after; i++) { const k = app.doc.nextKey(f); fs.push(k); f = k < 0 ? 1e9 : k; }
+    } else {
+      for (let i = 0; i < o.before; i++) fs.push(app.frame - o.step * (i + 1));
+      for (let i = 0; i < o.after; i++) fs.push(app.frame + o.step * (i + 1));
+    }
+    this.ghosts.forEach((g, i) => {
+      const f = fs[i];
+      g.root.visible = f >= 0 && f <= app.doc.frames;
+      if (!g.root.visible) return;
+      app.finalPoseOn(g.body, f);
+      const before = i < o.before;
+      const depth = (before ? i : i - o.before) + 1;
+      g.mat.color.set(before ? 0x5aa6ff : 0xff8c33);
+      g.mat.opacity = 0.34 / depth;
+    });
+  }
+
+  placeProps(app) {
+    const list = app.doc.props;
+    const sig = list.map((p) => `${p.shape}|${p.color}`).join(";");
+    if (sig !== this._propSig) {
+      this._propSig = sig;
+      this.props.clear();
+      for (const p of list) {
+        const mesh = new THREE.Mesh(propGeometry(p.shape), new THREE.MeshStandardMaterial({ color: p.color || "#c8c0d0", roughness: 0.6 }));
+        mesh.castShadow = true;
+        this.props.add(mesh);
+      }
+    }
+    list.forEach((p, i) => {
+      const mesh = this.props.children[i];
+      const sp = app.sockSpecs[p.socket] || { bone: p.bone || "handR" };
+      if (!mesh || !app.stage.body.has(sp.bone)) { if (mesh) mesh.visible = false; return; }
+      mesh.visible = p.visible !== false;
+      const q = app.stage.body.worldQuat(sp.bone);
+      mesh.position.copy(app.socketWorld(p.socket)).add(new THREE.Vector3(...v3(p.offset)).applyQuaternion(q));
+      const r = v3(p.rot).map((x) => (x * Math.PI) / 180);
+      mesh.quaternion.copy(q).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(r[0], r[1], r[2])));
+      mesh.scale.setScalar(Number(p.scale ?? 1));
+    });
+  }
+}
+
+export const PROP_SHAPES = ["box", "bat", "blade", "ball", "can", "phone"];
+
+function propGeometry(shape) {
+  switch (shape) {
+    case "bat": return new THREE.CylinderGeometry(0.035, 0.018, 0.85, 16);
+    case "blade": return new THREE.BoxGeometry(0.05, 0.9, 0.01);
+    case "ball": return new THREE.SphereGeometry(0.11, 24, 16);
+    case "can": return new THREE.CylinderGeometry(0.033, 0.033, 0.12, 20);
+    case "phone": return new THREE.BoxGeometry(0.075, 0.15, 0.01);
+  }
+  return new THREE.BoxGeometry(0.2, 0.2, 0.2);
+}

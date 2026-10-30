@@ -4,6 +4,7 @@ var _key := "vix"
 var _clip := "jump"
 var _out := "D:/Cache/clip_strip.png"
 func _ready() -> void:
+	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_NO_FOCUS, true)   # never takes the keyboard
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--fighter="): _key = a.substr(10)
 		elif a.begins_with("--clip="): _clip = a.substr(7)
@@ -28,6 +29,7 @@ func _ready() -> void:
 		m.rotation.y = deg_to_rad(90)   # side on, facing screen-right
 		models.append(m)
 		anims.append(m.find_children("*", "AnimationPlayer", true, false)[0])
+		CBClipLib.install(anims[i], m, m.find_children("*", "Skeleton3D", true, false)[0])
 	var len_: float = (anims[0] as AnimationPlayer).get_animation(_clip).length
 	for i in N:
 		var ap: AnimationPlayer = anims[i]

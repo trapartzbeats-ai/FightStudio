@@ -1,5 +1,5 @@
 {
-  "note": "Secondary motion chains (secondary.gd): tails, fingers... move by themselves from the character's motion. strength 0..1 = how much over the animation; stiffness / drag / gravity per joint root -> end (a number = all joints). Per-fighter overrides under fighters. Edit in the Studio SECONDARY tab. Chains whose bones a fighter does not have are skipped (ears: vix carter rhino; crest: guru; pom: slum).",
+  "note": "Secondary motion chains (secondary.gd): tails, fingers... move by themselves from the character's motion. strength 0..1 = how much over the animation; stiffness / drag / gravity per joint root -> end (a number = all joints). Per-fighter overrides under fighters. Edit in the Studio SECONDARY tab. Chains whose bones a fighter does not have are skipped (ears: vix carter rhino; crest: guru; pom: slum; breast_L / breast_R: kat, a light chest jiggle).",
   "enabled": true,
   "chains": {
     "tail": {
@@ -148,6 +148,44 @@
         0.3,
         0.4,
         0.5
+      ]
+    },
+    "breast_L": {
+      "enabled": true,
+      "root": "breastL",
+      "end": "breastL2",
+      "extend": 0.02,
+      "strength": 0.35,
+      "stiffness": [
+        5.0,
+        4.2
+      ],
+      "drag": [
+        0.5,
+        0.55
+      ],
+      "gravity": [
+        0.04,
+        0.05
+      ]
+    },
+    "breast_R": {
+      "enabled": true,
+      "root": "breastR",
+      "end": "breastR2",
+      "extend": 0.02,
+      "strength": 0.35,
+      "stiffness": [
+        5.0,
+        4.2
+      ],
+      "drag": [
+        0.5,
+        0.55
+      ],
+      "gravity": [
+        0.04,
+        0.05
       ]
     }
   },

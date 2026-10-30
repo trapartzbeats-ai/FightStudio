@@ -131,6 +131,8 @@ static func follow(fighter: Node3D, name: String) -> Node3D:
 	if spec.is_empty() or not fighter.has_method("socket"):
 		return null
 	var sock: Node3D = fighter.call("socket", str(spec[1]))
+	if sock == null and str(spec[1]).begins_with("ground"):
+		sock = fighter   # ground sockets are floor points, not nodes: the fighter's own origin IS the zero point at the feet
 	if sock == null:
 		return null
 	var node: Node3D = load("res://addons/rmt_effects/rmt_effect.gd").spawn(str(spec[0]), sock, Vector3.ZERO)

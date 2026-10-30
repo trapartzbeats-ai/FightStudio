@@ -12,9 +12,9 @@
   "dodge": [["dash_burst", 0.9]],
   "special": [["shockwave", 0.7]],
   "ko": [["explosion_heavy", 1.5]],
-  "ultra_impact": [["final_flash", 1.1], ["blast_wave", 1.2]],
+  "ultra_impact": [["shock_punch", 1.2], ["impact_spark", 1.6]],
   "follow": {
-    "shield": ["energy_shield", "chest", 1.0],
+    "shield": ["energy_shield", "ground_mid", 1.1],
     "ultra_charge": ["energy_charge", "chest", 1.2]
   }
 }

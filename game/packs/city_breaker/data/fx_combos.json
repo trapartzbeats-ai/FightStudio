@@ -1,6 +1,61 @@
 {
-  "note": "Effect combos made in the Studio: name -> [[RMT effect id, scale, delay seconds], ...]. Usable anywhere an effect id is (fx.json, clip cues).",
   "combos": {
-    "heavy_slam": [["impact_spark", 1.4, 0.0], ["shock_punch", 1.2, 0.0], ["blast_wave", 0.8, 0.06]]
-  }
+    "heavy_slam": [
+      [
+        "impact_spark",
+        1.4,
+        0.0
+      ],
+      [
+        "shock_punch",
+        1.2,
+        0.0
+      ],
+      [
+        "blast_wave",
+        0.8,
+        0.06
+      ]
+    ],
+    "shutter_flash": [
+      [
+        "final_flash",
+        0.2,
+        0.0
+      ],
+      [
+        "shock_punch",
+        0.7,
+        0.0
+      ],
+      [
+        "clash_sparks",
+        1.1,
+        0.03
+      ],
+      [
+        "impact_spark",
+        1.0,
+        0.05
+      ]
+    ],
+    "strike_burst": [
+      [
+        "blast_impact",
+        0.7,
+        0.0
+      ],
+      [
+        "shock_punch",
+        0.9,
+        0.0
+      ],
+      [
+        "impact_spark",
+        1.3,
+        0.0
+      ]
+    ]
+  },
+  "note": "Effect combos made in the Studio: name -> [[RMT effect id, scale, delay seconds], ...]. Usable anywhere an effect id is (fx.json, clip cues)."
 }

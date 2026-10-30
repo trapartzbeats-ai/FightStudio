@@ -1,26 +1,121 @@
 # Fight Studio
 
-A Godot 4.7 studio for authoring **animation, effects and sockets** on rigged fighters, with procedural body motion:
+Tools for animating rigged fighters, from the City Breaker fighting game in BSP Universe. There are three parts that share one clip
+format (`data/clips/<name>.json`), so a clip made in one opens in the others:
 
-- **POSE**: bone sliders, key frames, proportional editing, mirror L/R, fist/open hands, knee-safety check. Clips are plain JSON (`data/clips/*.json`) built into `Animation` resources at load.
-- **SOCKETS**: named points that ride a bone (point along a bone, offset, zone radius + falloff, ground and sole sockets), so effects always land on the right spot.
-- **EFFECTS**: preview effects from the RMT Effects add-on, put **cues** on a clip's timeline, stack **combos**.
-- **PAIR**: stage a victim next to the attacker and key its reaction on the same timeline (grabs, throws, finishers).
-- **SECONDARY**: tails, ears, fingers, crests move by themselves (`SpringBoneSimulator3D`) with stiffness / drag / gravity per joint.
-- **REACT**: IK-like hit reaction: the part of the victim a blow lands on moves with it, nearby bones follow in proportion, a spring settles it; the attacker recoils.
-- Save, **Export GLB**, and **Bake** (the `animato/` scripts key studio clips into a GLB through headless Blender).
+| Part | Where | What it is |
+|---|---|---|
+| **Fight Studio Animator** | `game/packs/city_breaker/animator/` | The animation app, in Godot 4.7. |
+| **Fight Studio Desktop** | `desktop/` | The same app as an Electron + three.js desktop program, no Godot needed. |
+| **fight-studio MCP** | `game/packs/city_breaker/animator/mcp/` | An MCP server that lets agents animate in either app. |
+
+The original **Fight Studio** (sockets, effects, pairs, secondary motion, hit reactions) is also here, in `game/packs/city_breaker/studio/`.
+
+## Fight Studio Animator (Godot)
+
+```
+godot --path . res://game/packs/city_breaker/animator/animator.tscn  [-- --fighter=vix --clip=w_walk --api-port=47650]
+```
+
+**Canvas**
+- Views: 1, 2, 3 or 4 at once, each with its own camera (Front, Three-Q, Side, Back, Top, Persp, Follow).
+- **Strip**: front / three-quarter / side / back rows across the whole clip, live as you edit.
+- Renders at full screen resolution, sharp in HD and 4K.
+
+**Posing**
+- **Rotate**: rings for one axis at a time, local or global, or swing a joint by dragging it.
+- **Move** the body, or pull a hand or foot with **IK**.
+- X-mirror editing.
+- Every joint has a natural range (`data/animator_rig.json`): knees and elbows are hinges, and a knee never bends forward.
+
+**Keys and frames**
+- Eases: linear, in, out, smooth, hold, spline.
+- **Same key**: an updated key updates the matching keys elsewhere in the clip (linked keys, the same pose, the same value).
+- Insert or delete frames, retime, reverse, close a loop, make breakdowns.
+
+**Locks and freeze**
+- Lock whole bones or single X/Y/Z channels.
+- Freeze pins a bone in the world over a range of frames (a planted foot while the body moves).
+
+**Rig tools**
+- **Constraints**: IK, freeze, aim, limit, copy rotation, floor / plant.
+- **Controls**: one slider moves many bones (fist, crouch, guard...), and you can add your own.
+- **Sockets** with stand-in props (bat, blade, ball) attached while you animate.
+
+**Blending and building clips**
+- **Layers**: add, add-delta or override, with bone masks and fades.
+- **Blend Lab**: transitions from one clip into another.
+- **Merge**: one animation built from several.
+- **Adjust**: tilt one part across the whole clip.
+- **Feet**: stand on the real soles.
+- **Motion import**: bring Mixamo motion onto the rig.
+
+**Windows**
+- Toolbars, a dope sheet and a graph editor.
+- Panels dock anywhere or pop out into their own window, and you can open extra canvas windows.
+
+**Saving**
+- The first save of a clip backs up the old file, and "deleted" clips go to a trash folder.
+- Every save stamps `studio.saved`, so the game's clip generators leave that clip alone.
+
+**Agent API**: `http://127.0.0.1:47650/rpc` (localhost only). Agent edits show live in the app and undo like yours.
+
+**Checks**: `godot --headless --path . --script res://game/packs/city_breaker/animator/tests/animator_check.gd -- --no-api`
+
+**Running from the Godot editor**: with Embed Game on, the editor owns the window, and dialogs open inside the app.
+
+The full manual is `game/packs/city_breaker/animator/README.md`.
+
+## Fight Studio Desktop (Electron)
+
+```
+cd desktop
+npm install
+npm start            # -- --fighter=carter --clip=a_jab1 --project=<your Godot project>
+npm run selftest     # 45 checks
+```
+
+- Same file format, interpolation, rules and bake signature as the Godot app.
+- Loads fighters straight from the game's GLBs.
+- Agent API on `:47651`.
+- File access is limited to the project's clip, pose and data folders. Set the folder with `--project=`; the default is the
+  author's path.
+
+## fight-studio MCP
+
+```
+claude mcp add -s user fight-studio -- python game/packs/city_breaker/animator/mcp/fight_studio_mcp.py
+```
+
+It finds whichever app is running (`:47650` or `:47651`, or `FIGHT_STUDIO_URL`). Tools, all `studio_*`:
+
+- `launch`, `open`, `new`, `save`
+- `get_pose` / `set_pose` (degrees), `ik_pose`, `key`, `keys`, `frames`
+- `controls`, `layers`, `constraints`, `freeze`, `lock`, `sockets`
+- `screenshot` (the four-angle review sheet), `checks`, `transition`, `undo`, `bake_glb`
 
 ## What is here, and what is not
 
-This is the **code and data format** only. It is lifted out of the City Breaker fighting-game pack of BSP Universe, and keeps that folder layout
-(`game/packs/city_breaker/...`) so it drops into a project at the same paths. The characters, stages and the RMT Effects add-on are **not** included
-(they belong to the game): you bring a rigged fighter (GLB with a `Skeleton3D` + `AnimationPlayer`, bones such as hips/torso/chest/head/armL/elbowL/handL/legL/kneeL/footL),
-a `CBRoster`/`CBSave`/`CBFx` equivalent (this code calls `CBRoster.model_path(key)`, `CBSave.setting`, the `Rmtfx` autoload), and adapt the bone names in `data/*.json`.
+This is the **code and data format** only. It is lifted out of the City Breaker pack and keeps its folder layout
+(`game/packs/city_breaker/...`), so it drops into a project at the same paths.
+
+The characters, stages and the RMT Effects add-on are **not** included; they belong to the game. You bring:
+- A rigged fighter: a GLB with a `Skeleton3D` and an `AnimationPlayer`, with bones such as hips/torso/chest/head/armL/elbowL/handL/
+  legL/kneeL/footL.
+- `CBRoster`, `CBSave` and `CBFx` equivalents (the code calls `CBRoster.model_path(key)`, `CBSave.setting` and the `Rmtfx` autoload).
+- Bone names adapted in `data/*.json`.
+
 `tools/` has headless checks (`studio_check`, `react_check`, `pair_check`) that need those assets.
 
-Rig axis conventions the clips assume are written at the top of `clip_lib.gd` (a knee never bends forward: the Studio and the bake scripts enforce it).
+Rig axis conventions are at the top of `clip_lib.gd`, and the joint ranges in `data/animator_rig.json` were checked by turning each
+joint on each axis.
 
-`animato/` are scripts for Animato (a local FastAPI + headless Blender tool, patched here to use an installed Blender): `bpy_add_clips2.py` authors movement clips, `bpy_add_ears.py` adds ear/crest chains, `bake_studio_clips.py` bakes Studio clips. Paths inside are the author's; edit the constants at the top.
+`animato/` holds scripts for Animato, a local FastAPI + headless Blender tool:
+- `bpy_add_clips2.py` authors movement clips.
+- `bpy_add_ears.py` adds ear and crest chains.
+- `bake_studio_clips.py` bakes Studio clips into a GLB.
+
+Paths inside the code are the author's (`D:/Games/BSP-Universe`, `D:/Cache`...); edit the constants at the top.
 
 Never switch a pose bone's `rotation_mode` before a glTF export of a rig whose actions use quaternions: the actions export flat.
 

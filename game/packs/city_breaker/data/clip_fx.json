@@ -1,4 +1,73 @@
 {
-  "note": "Effect cues per clip, edited in the Studio (studio/studio.tscn).",
-  "cues": {}
+  "cues": {
+    "vix_frame": [
+      {
+        "dur": 0.55,
+        "fx": "energy_charge",
+        "mode": "follow",
+        "scale": 1.1,
+        "socket": "chest",
+        "t": 0.2
+      },
+      {
+        "dur": 0.4,
+        "fx": "spell_circle_scifi",
+        "mode": "burst",
+        "scale": 0.7,
+        "socket": "ground_mid",
+        "t": 0.333
+      },
+      {
+        "dur": 0.4,
+        "fx": "shutter_flash",
+        "mode": "burst",
+        "scale": 1.0,
+        "socket": "fist_R",
+        "t": 0.667
+      },
+      {
+        "dur": 0.4,
+        "fx": "shockwave",
+        "mode": "burst",
+        "scale": 0.45,
+        "socket": "ground_R",
+        "t": 0.9
+      },
+      {
+        "dur": 0.4,
+        "fx": "strike_burst",
+        "mode": "burst",
+        "scale": 1.0,
+        "socket": "fist_R",
+        "t": 1.067
+      },
+      {
+        "dur": 0.4,
+        "fx": "afterimage",
+        "mode": "burst",
+        "scale": 1.0,
+        "socket": "mid",
+        "t": 1.1
+      }
+    ],
+    "vix_frame_react": [
+      {
+        "dur": 0.4,
+        "fx": "clash_sparks",
+        "mode": "burst",
+        "scale": 0.8,
+        "socket": "head",
+        "t": 0.5
+      },
+      {
+        "dur": 0.4,
+        "fx": "impact_spark",
+        "mode": "burst",
+        "scale": 1.1,
+        "socket": "chest",
+        "t": 0.667
+      }
+    ]
+  },
+  "note": "Effect cues per clip, edited in the Studio (studio/studio.tscn)."
 }
