@@ -8,6 +8,7 @@ format (`data/clips/<name>.json`), so a clip made in one opens in the others:
 | **Fight Studio Animator** | `game/packs/city_breaker/animator/` | The animation app, in Godot 4.7. |
 | **Fight Studio Desktop** | `desktop/` | The same app as an Electron + three.js desktop program, no Godot needed. |
 | **fight-studio MCP** | `game/packs/city_breaker/animator/mcp/` | An MCP server that lets agents animate in either app. |
+| **RMT Wrap** | `addons/rmt_wraps/`, `game/packs/city_breaker/wraps.gd` | Collision Wrap: body parts never go through their own body, the floor, the stage or another fighter. |
 
 The original **Fight Studio** (sockets, effects, pairs, secondary motion, hit reactions) is also here, in `game/packs/city_breaker/studio/`.
 
@@ -93,6 +94,26 @@ It finds whichever app is running (`:47650` or `:47651`, or `FIGHT_STUDIO_URL`).
 - `get_pose` / `set_pose` (degrees), `ik_pose`, `key`, `keys`, `frames`
 - `controls`, `layers`, `constraints`, `freeze`, `lock`, `sockets`
 - `screenshot` (the four-angle review sheet), `checks`, `transition`, `undo`, `bake_glb`
+
+## RMT Wrap: the Collision Wrap
+
+Shapes fitted to the real models instead of hand-placed boxes:
+
+- **The wrap**: each character gets 15 to 25 capsules, baked from its skin weights to sit just inside the skin
+  (`data/wraps/<key>.collide.json`, `tools/wrap_bake.gd`).
+- **The Body Solve** (`addons/rmt_wraps/body_solve.gd`) runs every frame after the clip pose:
+  - A part that went into the body, the floor, the stage or another character bends back out at its own joints, shoulder first.
+  - Every joint stays inside its natural range, and planted feet stay put.
+  - Fixes ease in and out over a few frames, so nothing pops.
+- **Springs**: tails, ears and crests bounce off the body.
+- **Visual only**: everything the game decides reads the clip's own pose, so fights play exactly as before.
+
+Results on City Breaker's 11 fighters (`WRAPS_PLAN.md`, pictures and videos in `reports/wraps_c0` to `wraps_c3`):
+- Parts more than 5 cm into the body, across all clips: 2,590 → 276.
+- Spring chains inside the body: down to 0 for four of the eight characters with chains.
+- In real matches, limbs in the stage: up to 1,091 → 24 frames per 30 seconds of fighting.
+
+How to wire it into a game: `addons/rmt_wraps/INTEGRATION.md`.
 
 ## What is here, and what is not
 

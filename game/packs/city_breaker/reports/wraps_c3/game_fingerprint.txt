@@ -1,0 +1,12 @@
+wraps on, stage marina, 1800 frames per pair, depths over 2 cm (feet 4 cm)
+bigbill vs rhino: frames with limbs in the stage 125, in the other body 143, trunks overlapping 66  (worst 36 cm bigbill ATTACK footL | 38 cm bigbill DAMAGE head_2 | 37 cm)
+  game at the end: bigbill x 2.7272 y 10.0194 60.0% stocks 99 | rhino x -2.6941 y 8.0007 70.0% stocks 99
+wraps OFF (as keyed), stage marina, 1800 frames per pair, depths over 2 cm (feet 4 cm)
+bigbill vs rhino: frames with limbs in the stage 1054, in the other body 216, trunks overlapping 63  (worst 60 cm rhino WAIT hips | 39 cm bigbill DASH head_2 | 40 cm)
+  game at the end: bigbill x 2.7272 y 10.0194 60.0% stocks 99 | rhino x -2.6941 y 8.0007 70.0% stocks 99
+wraps on, stage marina, 1800 frames per pair, depths over 2 cm (feet 4 cm)
+vix vs carter: frames with limbs in the stage 57, in the other body 195, trunks overlapping 57  (worst 55 cm vix FALL_SPECIAL chest | 31 cm vix ATTACK legL | 28 cm)
+  game at the end: vix x -4.6296 y 0.0009 31.0% stocks 98 | carter x -4.0746 y 0.0009 74.0% stocks 98
+wraps OFF (as keyed), stage marina, 1800 frames per pair, depths over 2 cm (feet 4 cm)
+vix vs carter: frames with limbs in the stage 161, in the other body 304, trunks overlapping 59  (worst 57 cm vix FALL_SPECIAL head | 37 cm carter ATTACK head | 28 cm)
+  game at the end: vix x -4.6296 y 0.0009 31.0% stocks 98 | carter x -4.0746 y 0.0009 74.0% stocks 98

@@ -1,0 +1,12 @@
+vix: frames with a chain inside the body  free 223/583 (worst 24.8 cm a_escape_f f17 kneeR/tail3)  ->  colliding 16/583 (worst 2.5 cm a_special_punch f45 legR/tail)
+    still touching (frames): leg-tail 15, tail-arm 1
+carter: frames with a chain inside the body  free 151/627 (worst 18.8 cm a_dash_attack f8 head/earL3)  ->  colliding 6/627 (worst 5.1 cm a_escape_b f16 elbowR/earR2)
+    still touching (frames): elbow-ear 5, hand-ear 4
+slum: frames with a chain inside the body  free 22/644 (worst 3.1 cm a_dash f3 head/pom2)  ->  colliding 0/644 (worst 0.0 cm )
+al: frames with a chain inside the body  free 64/667 (worst 24.6 cm a_escape_f f20 legR/tail3)  ->  colliding 0/667 (worst 0.0 cm )
+guru: frames with a chain inside the body  free 4/563 (worst 2.9 cm a_dash f6 head/crest3)  ->  colliding 0/563 (worst 0.0 cm )
+rhino: frames with a chain inside the body  free 35/688 (worst 9.5 cm a_land f2 chest/earR2)  ->  colliding 0/688 (worst 0.0 cm )
+hype: frames with a chain inside the body  free 184/571 (worst 11.3 cm w_run f18 kneeL/tail3)  ->  colliding 44/571 (worst 7.8 cm a_escape_f f25 neck/earR3)
+    still touching (frames): neck-ear 27, elbow-ear 10, hand-ear 9, head-ear 3
+kat: frames with a chain inside the body  free 476/591 (worst 24.3 cm a_special_punch f60 kneeR/tail3)  ->  colliding 162/591 (worst 7.5 cm a_dash f12 kneeR/tail3)
+    still touching (frames): leg-tail 160, knee-tail 6, foot-tail 3, hand-ear 1

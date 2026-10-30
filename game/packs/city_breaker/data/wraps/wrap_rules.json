@@ -1,0 +1,102 @@
+{
+  "note": "Collision Wrap rules for every City Breaker fighter (RmtWrapFit). merge: name prefix -> owner prefix (side and number kept), so finger bones count for the hand. ranks: lower holds, higher gives way in the Body Solve. radius_pct: the capsule radius is this percentile of the vertices' distance to the axis (just inside the skin). trim: share of vertices left off each end. min_verts: bones with fewer vertices get no piece. soft: pairs of part families that press like flesh (thigh into belly in a crouch, spine folding, chin to chest); the value is how deep they may go (world metres) before it counts as a clash. flat: a hub or end part whose cloud is this many times wider than thick becomes a row of thin capsules (a flat body). max_r: caps a limb's radius at this share of its length (by name prefix). chain: how many joints up a part may bend to get out (the part's own joint first); hips and root never bend. fighters: per-fighter overrides of any of these. max_turn: the most the Body Solve may turn a joint away from the clip (radians, by name prefix). spring_collide: spring chains (secondary.json) of these families bounce off the body's capsules.",
+  "merge": {
+    "fingers": "hand",
+    "tips": "hand",
+    "nail": "hand",
+    "index": "hand",
+    "pinky": "hand",
+    "ring": "hand",
+    "thumb": "hand"
+  },
+  "skip": [
+    "root"
+  ],
+  "min_verts": 40,
+  "radius_pct": 0.8,
+  "trim": 0.03,
+  "ranks": {
+    "hips": 0,
+    "torso": 0,
+    "chest": 1,
+    "neck": 2,
+    "head": 2,
+    "arm": 3,
+    "leg": 3,
+    "elbow": 4,
+    "knee": 4,
+    "hand": 5,
+    "foot": 5,
+    "tail": 6,
+    "ear": 6,
+    "crest": 6,
+    "pom": 6,
+    "fin": 6
+  },
+  "soft": {
+    "leg|torso": 0.05,
+    "chest|hips": 0.05,
+    "hips|neck": 0.03,
+    "chest|head": 0.03,
+    "head|torso": 0.03,
+    "leg|leg": 0.02,
+    "arm|torso": 0.02,
+    "arm|neck": 0.03,
+    "hips|leg": 0.03
+  },
+  "flat": 0,
+  "chain": {
+    "hand": 3,
+    "elbow": 2,
+    "arm": 1,
+    "foot": 3,
+    "knee": 2,
+    "leg": 1,
+    "tail": 3,
+    "ear": 2,
+    "crest": 2,
+    "pom": 2,
+    "fin": 2,
+    "head": 2,
+    "neck": 1,
+    "chest": 2,
+    "torso": 1,
+    "breast": 1
+  },
+  "fighters": {
+    "guru": {
+      "max_r": {
+        "leg": 0.28,
+        "knee": 0.25
+      }
+    },
+    "bigbill": {
+      "flat": 2.5
+    }
+  },
+  "max_turn": {
+    "hand": 0.6,
+    "head": 0.5,
+    "neck": 0.4,
+    "chest": 0.35,
+    "torso": 0.3,
+    "arm": 1.1,
+    "elbow": 1.2,
+    "leg": 0.8,
+    "knee": 1.0,
+    "foot": 0.6,
+    "tail": 1.6,
+    "ear": 1.6,
+    "crest": 1.6,
+    "pom": 1.6,
+    "fin": 1.6,
+    "breast": 0.5
+  },
+  "spring_collide": [
+    "tail",
+    "ear",
+    "crest",
+    "pom",
+    "fin"
+  ]
+}

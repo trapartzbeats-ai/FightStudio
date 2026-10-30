@@ -72,10 +72,12 @@ static func at(v: Variant, j: int, fallback: float) -> float:
 static func build(skel: Skeleton3D, key: String) -> Dictionary:
 	if not bool(data().get("enabled", true)):
 		return {}
-	return build_specs(skel, all_specs(key))
+	return build_specs(skel, all_specs(key), key)
 
 
-static func build_specs(skel: Skeleton3D, specs: Dictionary) -> Dictionary:
+## `key` = the fighter (for its Collision Wrap: chains bounce off the body, CBWraps.spring_colliders); "" = from the model file.
+## `collide` = false keeps the chains free (they swing through the body as before)
+static func build_specs(skel: Skeleton3D, specs: Dictionary, key: String = "", collide: bool = true) -> Dictionary:
 	var out: Dictionary = {}
 	if skel == null:
 		return out
@@ -105,13 +107,17 @@ static func build_specs(skel: Skeleton3D, specs: Dictionary) -> Dictionary:
 			sim.set_joint_radius(0, j, float(sp.get("radius", 0.0)))
 			sim.set_joint_rotation_axis(0, j, SpringBoneSimulator3D.ROTATION_AXIS_ALL)
 		sim.influence = clampf(float(sp.get("strength", 1.0)), 0.0, 1.0)
+		if collide:
+			CBWraps.spring_colliders(sim, skel, key, str(sp["root"]), str(sp["end"]))
 		out[name] = sim
+	if collide and not out.is_empty():
+		CBWraps.spring_guard(skel, key, out)   # last: what the springs still swing into the body is pushed back out
 	return out
 
 
 static func clear(skel: Skeleton3D) -> void:
 	for c in skel.get_children():
-		if c is SpringBoneSimulator3D:
+		if c is SpringBoneSimulator3D or c is RmtWrapModifier:
 			skel.remove_child(c)
 			c.queue_free()
 
